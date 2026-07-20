@@ -1,0 +1,101 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Test / coverage artifacts
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.cache/
+.tox/
+.nox/
+
+# Ruff
+.ruff_cache/
+
+# mypy / type checkers
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Environment files (only the template is tracked)
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs/
+
+# OS / scratch
+*.tmp
+*.bak
+*.swp
+
+# Visual Studio (Windows / C++) - build & user-specific temp
+# 注: Git 的 # 注释必须从行首开始，行内 # 会被当作字面字符
+# VS 用户级缓存（含 slnx.sqlite 等）
+.vs/
+# C++/C# 默认调试输出
+Debug/
+# C++/C# 默认发布输出
+Release/
+# VS 平台目录
+x64/
+# VS 平台目录
+x86/
+# C++/C# / .NET 构建产物
+bin/
+# C++/C# 中间产物
+obj/
+# VS 用户偏好（.vcxproj.user / .csproj.user 等）
+*.user
+# 旧版 VS 解决方案用户选项
+*.suo
+# 旧版 VS 浏览数据库
+*.sdf
+# VS 预编译头
+ipch/
