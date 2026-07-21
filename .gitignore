@@ -66,6 +66,10 @@ Thumbs.db
 .env.*
 !.env.example
 
+# Real app config (template tracked, real ignored)
+config.json
+!config.example.json
+
 # Logs
 *.log
 logs/
