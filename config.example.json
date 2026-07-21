@@ -1,0 +1,7 @@
+{
+  "app_name": "week01-ai-basics",
+  "model_name": "ai-mini",
+  "api_base_url": "https://api.example.com/v1",
+  "timeout_seconds": 30.0,
+  "enable_stream": false
+}
