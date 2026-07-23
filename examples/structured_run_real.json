@@ -1,0 +1,110 @@
+{
+  "base_url": "http://localhost:11434/v1",
+  "model": "qwen3:latest",
+  "stability": [
+    {
+      "label": "5x-1",
+      "ok": true,
+      "elapsed_ms": 51729,
+      "title": "电商网站",
+      "category": "web",
+      "n_functional": 4,
+      "n_risks": 2,
+      "n_clarification": 2,
+      "confidence": 0.9
+    },
+    {
+      "label": "5x-2",
+      "ok": true,
+      "elapsed_ms": 81972,
+      "title": "电商网站",
+      "category": "web",
+      "n_functional": 4,
+      "n_risks": 2,
+      "n_clarification": 1,
+      "confidence": 0.9
+    },
+    {
+      "label": "5x-3",
+      "ok": true,
+      "elapsed_ms": 81888,
+      "title": "电商网站",
+      "category": "web",
+      "n_functional": 4,
+      "n_risks": 2,
+      "n_clarification": 1,
+      "confidence": 0.9
+    },
+    {
+      "label": "5x-4",
+      "ok": true,
+      "elapsed_ms": 78477,
+      "title": "电商网站",
+      "category": "web",
+      "n_functional": 4,
+      "n_risks": 2,
+      "n_clarification": 1,
+      "confidence": 0.9
+    },
+    {
+      "label": "5x-5",
+      "ok": true,
+      "elapsed_ms": 80207,
+      "title": "电商网站",
+      "category": "web",
+      "n_functional": 4,
+      "n_risks": 2,
+      "n_clarification": 1,
+      "confidence": 0.9
+    }
+  ],
+  "samples": {
+    "normal": {
+      "label": "normal",
+      "ok": true,
+      "elapsed_ms": 87473,
+      "title": "中小型零售商B2C电商网站",
+      "category": "web",
+      "n_functional": 6,
+      "n_risks": 4,
+      "n_clarification": 3,
+      "confidence": 0.85
+    },
+    "ambiguous": {
+      "label": "ambiguous",
+      "ok": true,
+      "elapsed_ms": 35227,
+      "title": "未明确的产品需求",
+      "category": "other",
+      "n_functional": 0,
+      "n_risks": 2,
+      "n_clarification": 4,
+      "confidence": 0.2
+    },
+    "missing_info": {
+      "label": "missing_info",
+      "ok": false,
+      "stage": "call",
+      "error": "LlmTimeoutError: request timed out after 3 attempts",
+      "elapsed_ms": 362070
+    },
+    "irrelevant": {
+      "label": "irrelevant",
+      "ok": true,
+      "elapsed_ms": 198407,
+      "title": "非产品需求输入",
+      "category": "other",
+      "n_functional": 0,
+      "n_risks": 0,
+      "n_clarification": 1,
+      "confidence": 0.05
+    },
+    "very_long": {
+      "label": "very_long",
+      "ok": false,
+      "stage": "call",
+      "error": "LlmTimeoutError: request timed out after 3 attempts",
+      "elapsed_ms": 362053
+    }
+  }
+}
