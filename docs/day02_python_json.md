@@ -160,7 +160,9 @@ $ uv run python -m src.config --source json --path config.json
   "timeout_seconds": 30.0,
   "enable_stream": false
 }
+
 ```
+![JSON 加载](./poho/source_json.png)
 
 ### 4.5 从环境变量加载
 
@@ -172,6 +174,7 @@ export API_BASE_URL="https://api.example.com/v1"
 uv run python -m src.config --source env
 unset MODEL_NAME API_BASE_URL
 ```
+![env 加载](./poho/source_env.png)
 
 **cmd**：
 
@@ -191,6 +194,7 @@ set API_BASE_URL=
 # 无 env 变量时回退读 config.example.json
 uv run python -m src.config --source auto --path config.example.json
 ```
+![auto 模式](./poho/source_auto.png)
 
 ### 4.7 触发"缺失字段"错误
 
@@ -204,6 +208,7 @@ api_base_url
 ```
 
 退出码 `1`，方便 CI 流水线判失败。
+![缺失字段](./poho/missing_required_field.png)
 
 ### 4.8 触发"文件不存在"错误
 
@@ -211,16 +216,21 @@ api_base_url
 $ uv run python -m src.config --source json --path /tmp/nope.json
 [config error] FileNotFoundError: config file not found: /tmp/nope.json
 ```
+![文件不存在](./poho/points_to_a_non-existent_file.png)
 
 ### 4.9 以 Python 模块形式调用
 
 ```bash
 $ uv run python - <<'PY'
+from dotenv import load_dotenv
 from src.config import load_config
+
+load_dotenv()  # ← 加这行，把 .env 读进 os.environ
 cfg = load_config()
 print(type(cfg).__name__, cfg.model_name, cfg.timeout_seconds)
 PY
-AppConfig ai-mini 30.0
+AppConfig qwen3:latest 120.0
+
 ```
 
 ### 4.10 单元测试：pytest（12 个用例）
@@ -230,7 +240,7 @@ uv run pytest -q        # 简洁模式：期望 "12 passed"
 # 或
 uv run pytest -v        # 详细模式：逐个用例名
 ```
-
+![单元测试](./poho/pytest.png)
 覆盖：正常 JSON / 正常 env / 缺 `model_name` / 类型错误 / 文件不存在 / JSON 顶层非对象 / 序列化与回读 / `auto` 模式 env 优先与回退等。`.venv` 重建后 `uv run pytest` 已能直接跑。
 
 ### 4.11 质量门：Ruff 静态检查 + 格式化
@@ -240,6 +250,7 @@ uv run ruff check .          # 期望 "All checks passed!"
 uv run ruff format --check . # 期望 "N files already formatted"
 uv run ruff format .         # 仅当你想让 ruff 自动排版时执行
 ```
+![ruff检查](./poho/ruff_check.png)
 
 ### 4.12 一键全流程（提交前自检）
 
@@ -254,7 +265,7 @@ uv run ruff check .
 uv run ruff format --check .
 ```
 
-> 详细踩坑见 §5。`.venv/` 在项目迁移后必须 `rm -rf .venv && uv sync` 重建（§5.5）。
+
 
 ---
 
@@ -276,18 +287,29 @@ config.json
 
 本地调试如需真实配置，按 §4.3 复制模板即可；该文件不会被提交。
 
-### 5.3 Pydantic v2 行为小坑
+### 5.3. python模块错误
+
+运行uv run python - <<'PY'，`load_dotenv()` 读不到 `.env`。
+source="auto" 时先试环境变量，没有再退回 config.json。脚本里：
+  load_config() 用了默认参数 → source="auto"、config_path="config.json"
+  第 83 行 _read_env() 是从 os.environ 取的，Python 不会自动把 .env 文件加载到 os.environ——必须显式调用 load_dotenv()
+  heredoc 没调用 load_dotenv() → _read_env 返回 {}（空字典）→ 触发 _read_json(path) → config.json 不存在 → 抛 FileNotFoundError
+使用显式 `load_dotenv(dotenv_path=_path=".env")` 传路径解决。
+
+---
+
+### 5.4 Pydantic v2 行为注意
 
 - `bool` 字段从字符串解析时，**区分大小写**：`"True"` / `"False"`（首字母大写）**也会**被正确解析；但 `"TRUE"` 在 Python 3.11+ 的 `distutils.util.strtobool` 后续版本里行为有变化——Pydantic v2 自身接受 `"true"` / `"True"` / `"TRUE"`。以 Pydantic 自身为准。
 - `float` 字段接受字符串 `"30"` → `30.0`；不接受 `"30s"` 之类的尾缀。
 - 缺失必填字段时 Pydantic 抛 `ValidationError`，**不是** `KeyError` 或 `AttributeError`，调用方需要 `from pydantic import ValidationError` 精准捕获。
 
-### 5.4 `pathlib` 在 Windows 上的两点注意
+### 5.5 `pathlib` 在 Windows 上的两点注意
 
 - `Path("config.json")` 解析为 `WindowsPath('config.json')`——可读性差，但**等价**于 `PosixPath`，大多数操作通用。
 - `path.read_text(encoding="utf-8")` 显式声明编码是必须的，**不能省**，否则 Windows 默认 GBK 会在多语言字符串上报错。
 
-### 5.5 `uv run pytest` 失败的真正原因（已修正）
+### 5.6 `uv run pytest` 失败的真正原因
 
 **错误归因**（之前误判）：以为是 uv 在 Windows 上的 trampoline 解析 bug，需要用 `uv run python -m pytest` 绕开。
 
@@ -330,3 +352,10 @@ uv run ruff check .     # 直接跑
 - 同样的坑也适用于 `pip install -r requirements.txt` 创建的 venv；统一用 `uv` + 路径无关的 Python 解释器是根治办法
 
 ---
+
+## 6. 参考
+
+- 项目源码：`src/config.py`
+- 配置示例：`config.example.json`
+- 测试：`tests/test_config.py`
+- 官方参考：Python 数据结构；Python 异常处理；Pydantic Models

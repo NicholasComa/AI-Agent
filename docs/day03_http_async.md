@@ -215,6 +215,7 @@ uv run pytest tests/test_llm_client.py
 # 风格检查
 uv run ruff check . 
 ```
+![测试结果](./poho/llm_client.png)
 
 ### 7.2. 跑指定用例 / 关键字筛选
 
@@ -236,10 +237,9 @@ PowerShell 需先 `Activate.ps1` 激活 venv（提示符显示 `(week01-ai-basic
 
 ---
 
-## 8. 已知问题
+## 8. 参考
 
-| 现象 | 原因 | 解决 |
-| --- | --- | --- |
-| `load_dotenv()` 读不到 `.env` | 默认从脚本目录往上找，不在 CWD | 显式 `load_dotenv(dotenv_path=...)` |
+- 项目源码：`src/llm_client.py`（Day 3）/`src/config.py`（Day 2）
+- 测试：`tests/test_llm_client.py`
+- 官方参考：Python asyncio；FastAPI 异步说明；Ollama API（可选本地模型）
 
----

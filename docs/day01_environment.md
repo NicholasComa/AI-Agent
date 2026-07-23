@@ -247,3 +247,11 @@ fatal: adding files failed
 
 - `src/hello.py` 之外的 `src/` 为空；`tests/` 为空；`docs/` 仅本文档。Day 2 起按 Roadmap 填充。
 - 用户用 VS 打开本目录后会在 `.vs/` 下产生临时文件，**已通过 `.gitignore` 忽略**，无需手动清理。
+
+---
+
+## 9. 参考
+
+- 项目源码：`src/hello.py`
+- 工程配置：`pyproject.toml` / `uv.lock` / `.gitignore` / `.env.example` / `README.md`
+- 官方参考：Python 官方教程；uv 安装与项目管理；Ruff 官方文档；pytest 官方入门
