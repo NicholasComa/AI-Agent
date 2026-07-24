@@ -136,9 +136,7 @@ async def main() -> int:
                     f"conf={rec['confidence']} | {rec['elapsed_ms']}ms"
                 )
             else:
-                print(
-                    f"  {sid:14s}: FAILED ({rec.get('stage')}) - {rec.get('error')}"
-                )
+                print(f"  {sid:14s}: FAILED ({rec.get('stage')}) - {rec.get('error')}")
         print()
 
         # Summary
@@ -156,10 +154,7 @@ async def main() -> int:
         titles = [r["title"] for r in stability_records if r["ok"]]
         if titles:
             same = sum(1 for t in titles if t == titles[0])
-            print(
-                f"5x title unique: {len(set(titles))}/{len(titles)}; "
-                f"matches-first: {same}"
-            )
+            print(f"5x title unique: {len(set(titles))}/{len(titles)}; matches-first: {same}")
         cats = [r["category"] for r in stability_records if r["ok"]]
         if cats:
             print(f"5x category unique: {set(cats)}")
