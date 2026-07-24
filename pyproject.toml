@@ -5,7 +5,7 @@ description = "Week 1 of the 12-week AI Agent roadmap: AI fundamentals and Pytho
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "fastapi>=0.139.2",
+    "fastapi[standard]>=0.139.2",
     "httpx>=0.28.1",
     "pydantic>=2.13.4",
     "python-dotenv>=1.2.2",
