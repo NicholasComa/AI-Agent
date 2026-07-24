@@ -1,19 +1,16 @@
-"""Tests for :mod:`src.schemas` + :mod:`src.prompts` (Day 4 structured output).
+"""针对 :mod:`src.schemas` + :mod:`src.prompts` 的测试（Day 4 结构化输出）。
 
-All tests use ``httpx.MockTransport`` so the suite never hits the network. Two
-groups of tests:
+所有测试都使用 ``httpx.MockTransport``，因此测试套件永远不会触网。测试分为
+两组：
 
-1. **5x stability test** - call the LLM 5 times on the same input and verify
-   that the structure of the returned Pydantic model is stable across runs
-   (same field names, type-correct, sane confidence band).
+1. **5 次稳定性测试** - 对同一个输入调用 LLM 5 次，验证返回的 Pydantic 模型
+   结构在多次运行间保持稳定（字段名一致、类型正确、置信度落在合理区间）。
 
-2. **Five-sample tests** - one parametrized test per sample (normal /
-   ambiguous / missing_info / irrelevant / very_long). Each uses a handler
-   that returns a plausible RequirementAnalysis for that input and checks
-   schema acceptance plus per-sample sanity bands.
+2. **五样本测试** - 每个样本（normal / ambiguous / missing_info / irrelevant /
+   very_long）对应一个参数化测试。每个测试用一个返回该输入"合理答案"的
+   处理器，检查 schema 是否接受，以及每个样本各自的合理性边界。
 
-Two boundary tests cover ``extra="forbid"`` (extra field) and the
-``confidence`` range constraint.
+两个边界测试覆盖了 ``extra="forbid"``（多余字段）和 ``confidence`` 的取值范围约束。
 """
 
 from __future__ import annotations
@@ -32,7 +29,7 @@ from prompts import build_messages
 from schemas import RequirementAnalysis
 
 # ---------------------------------------------------------------------------
-# Constants and helpers
+# 常量与辅助函数
 # ---------------------------------------------------------------------------
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -40,7 +37,7 @@ SAMPLES_PATH = REPO_ROOT / "examples" / "requirement_samples.json"
 
 
 def _make_client(handler: Callable[[httpx.Request], httpx.Response]) -> LlmClient:
-    """Build a ``LlmClient`` whose HTTP layer is fully mocked."""
+    """构造一个 HTTP 层被完全 mock 掉的 ``LlmClient``。"""
     transport = httpx.MockTransport(handler)
     http_client = httpx.AsyncClient(transport=transport)
     return LlmClient(
@@ -53,7 +50,7 @@ def _make_client(handler: Callable[[httpx.Request], httpx.Response]) -> LlmClien
 
 
 def _wrap_payload(payload: dict[str, Any], *, model: str = "qwen3") -> dict[str, Any]:
-    """Wrap a JSON-serialisable ``payload`` as a chat-completion response body."""
+    """把一个可 JSON 序列化的 ``payload`` 包成对话补全的响应体。"""
     return {
         "id": "chatcmpl-1",
         "model": model,
@@ -73,7 +70,7 @@ def _wrap_payload(payload: dict[str, Any], *, model: str = "qwen3") -> dict[str,
 def _ok_handler_with_payload(
     payload: dict[str, Any],
 ) -> Callable[[httpx.Request], httpx.Response]:
-    """200 OK handler returning a fixed chat-completion payload."""
+    """返回固定对话补全载荷的 200 OK 处理器。"""
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=_wrap_payload(payload))
@@ -84,7 +81,7 @@ def _ok_handler_with_payload(
 def _cycling_handler(
     variants: list[dict[str, Any]],
 ) -> Callable[[httpx.Request], httpx.Response]:
-    """Handler that cycles through ``variants[0], variants[1], ...`` on each call."""
+    """每次调用依次循环返回 ``variants[0], variants[1], ...`` 的处理器。"""
 
     state = {"i": 0}
 
@@ -102,7 +99,7 @@ def _load_samples() -> dict[str, dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# Test data: 5 plausible variants for the same "normal" input
+# 测试数据：同一个 "normal" 输入的 5 个合理变体
 # ---------------------------------------------------------------------------
 
 NORMAL_VARIANTS: list[dict[str, Any]] = [
@@ -162,7 +159,7 @@ NORMAL_VARIANTS: list[dict[str, Any]] = [
 ]
 
 
-# Per-sample "plausible" answers (used by the 5 parametrized sample tests)
+# 每个样本的"合理"答案（被下面 5 个参数化样本测试使用）
 SAMPLE_ANSWERS: dict[str, dict[str, Any]] = {
     "normal": NORMAL_VARIANTS[0],
     "ambiguous": {
@@ -226,20 +223,20 @@ SAMPLE_ANSWERS: dict[str, dict[str, Any]] = {
 
 
 # ---------------------------------------------------------------------------
-# 5x stability test
+# 5 次稳定性测试
 # ---------------------------------------------------------------------------
 
 
 async def test_stability_5_runs_same_input(capsys: pytest.CaptureFixture[str]) -> None:
-    """Run the same input 5 times; structure must be stable across all runs.
+    """对同一个输入运行 5 次；结构在所有运行中必须保持稳定。
 
-    Mock handler cycles through 5 plausible-but-different RequirementAnalysis
-    JSONs, mimicking real LLM non-determinism. The test asserts:
-    - All 5 parses succeed (Pydantic validation passes)
-    - All 5 return the same category ("web")
-    - All titles have plausible length (2-80)
-    - All confidences in sane band [0.5, 0.95]
-    - All have at least 3 functional points (the input clearly demands it)
+    mock 处理器在 5 个合理但不同的 RequirementAnalysis JSON 间循环，模拟真实
+    LLM 的不确定性。测试断言：
+    - 5 次解析全部成功（Pydantic 校验通过）
+    - 5 次都返回相同的 category（"web"）
+    - 所有 title 长度合理（2-80）
+    - 所有 confidence 落在合理区间 [0.5, 0.95]
+    - 都至少有 3 条功能要点（输入明显要求这么多）
     """
     client = _make_client(_cycling_handler(NORMAL_VARIANTS))
     customer_input = "做一个电商网站，登录+商品浏览+购物车+支付"
@@ -258,19 +255,19 @@ async def test_stability_5_runs_same_input(capsys: pytest.CaptureFixture[str]) -
             parsed = RequirementAnalysis.model_validate_json(resp.text)
             results.append(parsed)
 
-    # All 5 parses succeeded
+    # 5 次解析全部成功
     assert len(results) == 5
-    # All in same category (structural stability)
+    # 都落在同一分类（结构稳定）
     assert all(r.category == "web" for r in results), [r.category for r in results]
-    # All titles have plausible length
+    # 所有 title 长度合理
     assert all(2 <= len(r.title) <= 80 for r in results), [r.title for r in results]
-    # All confidences in sane band
+    # 所有 confidence 落在合理区间
     confidences = [r.confidence for r in results]
     assert all(0.5 <= c <= 0.95 for c in confidences), confidences
-    # All have at least 3 functional points (the input clearly demands it)
+    # 都至少有 3 条功能要点（输入明显要求这么多）
     assert all(len(r.functional_points) >= 3 for r in results)
 
-    # Print 5-run report (visible with ``pytest -s``)
+    # 打印 5 次运行报告（用 ``pytest -s`` 可见）
     with capsys.disabled():
         print("\n=== 5x stability report (same input, 5 runs) ===")
         for i, r in enumerate(results, 1):
@@ -282,7 +279,7 @@ async def test_stability_5_runs_same_input(capsys: pytest.CaptureFixture[str]) -
 
 
 # ---------------------------------------------------------------------------
-# Per-sample tests (5 samples)
+# 逐样本测试（5 个样本）
 # ---------------------------------------------------------------------------
 
 
@@ -291,17 +288,17 @@ async def test_stability_5_runs_same_input(capsys: pytest.CaptureFixture[str]) -
     ["normal", "ambiguous", "missing_info", "irrelevant", "very_long"],
 )
 async def test_sample_accepted_by_schema(sample_id: str) -> None:
-    """For each of 5 sample inputs, the LLM response validates as RequirementAnalysis.
+    """对 5 个样本输入中的每一个，LLM 响应都应能校验为 RequirementAnalysis。
 
-    Each sample uses a mock handler returning a plausible RequirementAnalysis
-    tailored to that input. The test verifies:
-    - 6 fields all present and type-correct
-    - confidence in [0, 1]
-    - title length 2-80
-    - functional_points count within [0, 6]
-    - risks count within [0, 4]
-    - clarification_questions count within [0, 5]
-    - per-sample sanity: ambiguous/irrelevant low conf, normal/very_long high
+    每个样本使用一个返回为该输入"量身定制"的合理 RequirementAnalysis 的
+    mock 处理器。测试验证：
+    - 6 个字段都存在且类型正确
+    - confidence 在 [0, 1]
+    - title 长度 2-80
+    - functional_points 数量在 [0, 6]
+    - risks 数量在 [0, 4]
+    - clarification_questions 数量在 [0, 5]
+    - 每个样本的合理性：ambiguous/irrelevant 低置信度，normal/very_long 高
     """
     samples = _load_samples()
     sample = samples[sample_id]
@@ -319,14 +316,14 @@ async def test_sample_accepted_by_schema(sample_id: str) -> None:
 
     parsed = RequirementAnalysis.model_validate_json(resp.text)
 
-    # Universal field checks
+    # 通用字段检查
     assert 2 <= len(parsed.title) <= 80, parsed.title
     assert 0.0 <= parsed.confidence <= 1.0
     assert 0 <= len(parsed.functional_points) <= 6
     assert 0 <= len(parsed.risks) <= 4
     assert 0 <= len(parsed.clarification_questions) <= 5
 
-    # Per-sample sanity bands
+    # 每个样本的合理性边界
     if sample_id in ("ambiguous", "irrelevant"):
         assert parsed.confidence <= 0.3, (
             f"{sample_id} should have low confidence, got {parsed.confidence}"
@@ -340,7 +337,7 @@ async def test_sample_accepted_by_schema(sample_id: str) -> None:
             f"missing_info should be in middle band, got {parsed.confidence}"
         )
 
-    # Per-sample category sanity
+    # 每个样本的分类合理性
     if sample_id in ("ambiguous", "irrelevant"):
         assert parsed.category == "other"
     elif sample_id == "missing_info":
@@ -350,12 +347,12 @@ async def test_sample_accepted_by_schema(sample_id: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Boundary tests
+# 边界测试
 # ---------------------------------------------------------------------------
 
 
 async def test_extra_field_rejected() -> None:
-    """LLM returning an extra field (hallucination) must raise ValidationError."""
+    """LLM 返回了多余字段（幻觉）时必须抛出 ValidationError。"""
     bad_payload = dict(SAMPLE_ANSWERS["normal"], hallucination="foo")
     client = _make_client(_ok_handler_with_payload(bad_payload))
 
@@ -373,7 +370,7 @@ async def test_extra_field_rejected() -> None:
 
 
 async def test_invalid_confidence_rejected() -> None:
-    """LLM returning confidence > 1.0 must raise ValidationError."""
+    """LLM 返回 confidence > 1.0 时必须抛出 ValidationError。"""
     bad_payload = dict(SAMPLE_ANSWERS["normal"], confidence=1.5)
     client = _make_client(_ok_handler_with_payload(bad_payload))
 

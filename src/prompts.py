@@ -1,30 +1,26 @@
 from __future__ import annotations
 
-"""Day 4 - system prompt and message-builder for requirement analysis.
+"""Day 4 - 需求分析的系统提示词与消息构造器。
 
-This module owns the **prompt contract** that pairs with
-:class:`src.schemas.RequirementAnalysis`. The two must stay in sync: the
-system prompt below defines what the LLM is asked to produce, and
-:class:`RequirementAnalysis` defines what the Pydantic parser will accept.
+本模块持有与 :class:`src.schemas.RequirementAnalysis` 配对的
+**提示词契约**。两者必须保持同步：下面的系统提示词定义了要求 LLM 产出什么，
+而 :class:`RequirementAnalysis` 定义了 Pydantic 解析器会接受什么。
 
-Three deliberate choices:
+有三个刻意为之的选择：
 
-1. **Force JSON-only output.** The system prompt explicitly forbids
-   markdown code fences, preamble, and trailing text. The word ``"JSON"``
-   is included verbatim so OpenAI-compatible ``response_format=json_object``
-   mode can engage on providers that require it (including Ollama, DeepSeek,
-   OpenAI, vLLM).
-2. **Three in-prompt examples** (clear / vague / off-topic) instead of one.
-   This teaches the model the three corners of the input space and
-   dramatically improves stability on edge cases.
-3. **Schema-aware guidance.** The field-by-field description mirrors the
-   ``Field(..., description=...)`` in :mod:`src.schemas`, so if a future
-   maintainer tweaks a constraint they will notice the mismatch.
+1. **强制只输出 JSON。** 系统提示词明确禁止 markdown 代码块、前言和尾巴文字。
+   原样包含单词 ``"JSON"``，以便需要它的 OpenAI 兼容服务（包括 Ollama、
+   DeepSeek、OpenAI、vLLM）可以启用 ``response_format=json_object`` 模式。
+2. **三段提示词内示例**（清晰 / 模糊 / 无关），而不是一段。
+   这教会模型输入空间三个角落的样子，并显著提升在边界情形下的稳定性。
+3. **感知 schema 的引导。** 逐字段的描述镜像了 :mod:`src.schemas` 里的
+   ``Field(..., description=...)``，这样将来维护者若调整了某个约束，会注意到
+   提示词与 schema 之间的不一致。
 """
 
 
 SYSTEM_PROMPT: str = """\
-你是资深产品需求分析师。你的任务是把客户的一段原始需求文字转写成结构化 JSON。
+你是资深产品需求分析师。你的任务是把客户的一段原始需求文字转写成结构化JSON。
 
 ## 严格要求
 - **只输出合法 JSON 对象**，禁止任何额外文本（不要 markdown 代码块、不要解释、不要前后缀）。
@@ -57,17 +53,18 @@ SYSTEM_PROMPT: str = """\
 请把以下客户输入转写为符合上述 schema 的 JSON。
 """
 
-##构建标准化消息格式 把"用户问题"包装成 LLM 需要的"消息格式"
+
+## 构建标准化消息格式：把"用户问题"包装成 LLM 需要的"消息格式"
 def build_messages(customer_text: str, system_prompt: str = SYSTEM_PROMPT) -> list[dict[str, str]]:
-    """Build the messages list for a structured-output chat call.
+    """为一次结构化输出对话调用构造 messages 列表。
 
     Args:
-        customer_text: the raw customer input (a single user turn).
-        system_prompt: override the default system prompt (mainly for tests).
+        customer_text: 原始客户输入（单条用户话语）。
+        system_prompt: 覆盖默认的系统提示词（主要用于测试）。
 
     Returns:
-        A two-element list: ``[system, user]`` ready to feed into
-        :meth:`src.llm_client.LlmClient.chat`.
+        一个包含两个元素的列表：``[system, user]``，可直接喂给
+        :meth:`src.llm_client.LlmClient.chat`。
     """
     return [
         {"role": "system", "content": system_prompt},

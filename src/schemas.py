@@ -1,32 +1,31 @@
-"""Day 4 - structured output schema for requirement analysis.
+"""Day 4 - 需求分析的结构化输出模型。
 
-Defines :class:`RequirementAnalysis`, the Pydantic model that the LLM must
-populate. It is the contract that ties together the system prompt
-(:mod:`src.prompts`), the chat call (:class:`src.llm_client.LlmClient`),
-and the parser/validator in :mod:`tests.test_structured_output`.
+定义 :class:`RequirementAnalysis`，即 LLM 必须填充的 Pydantic 模型。
+它是把下面三者绑定在一起的契约：系统提示词（:mod:`src.prompts`）、
+对话调用（:class:`src.llm_client.LlmClient`），以及
+:mod:`tests.test_structured_output` 里的解析/校验器。
 
-Three design choices worth knowing:
+有三个值得一提的设计选择：
 
-1. ``extra='forbid'`` - if the LLM returns fields not declared here, Pydantic
-   raises ``ValidationError`` instead of silently accepting them. This catches
-   hallucinations at the boundary.
-2. ``Field(..., ge=0.0, le=1.0)`` on ``confidence`` - a numeric range
-   guarantee that's hard to get from a free-text prompt alone.
-3. Every field has a ``description=`` string. The system prompt in
-   :mod:`src.prompts` mirrors these descriptions so the schema and the
-   prompt cannot drift apart.
+1. ``extra='forbid'`` - 如果 LLM 返回了这里没有声明的字段，Pydantic 会
+   抛出 ``ValidationError``，而不是默默接受。这能在边界处拦住幻觉。
+2. ``confidence`` 上的 ``Field(..., ge=0.0, le=1.0)`` - 一个数值范围保证，
+   光靠自由文本提示词很难拿到。
+3. 每个字段都带有 ``description=`` 字符串。:mod:`src.prompts` 里的系统提示词
+   镜像了这些描述，从而让 schema 和提示词不会各说各话。
 """
 
 from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
-#需求分析输出模型
-class RequirementAnalysis(BaseModel):
-    """Structured analysis of a customer's product requirement.
 
-    Returned by the LLM (as a JSON object) and validated by Pydantic.
-    The model has no methods - it is a pure data contract.
+# 需求分析输出模型
+class RequirementAnalysis(BaseModel):
+    """对客户产品需求的结构化分析。
+
+    由 LLM 返回（作为 JSON 对象），并由 Pydantic 做校验。
+    该模型没有任何方法——它就是一个纯数据契约。
     """
 
     model_config = ConfigDict(extra="forbid")

@@ -1,18 +1,17 @@
-"""Day 3 - asynchronous LLM chat-completions client.
+"""Day 3 - 异步 LLM 对话补全客户端。
 
-The client is a thin async wrapper around an OpenAI-compatible
-``POST /chat/completions`` endpoint. It focuses on three things:
+该客户端是对一个 OpenAI 兼容的 ``POST /chat/completions`` 接口的一层
+轻量异步封装。它专注三件事：
 
-1. **Robustness.** Classify failures (auth, rate limit, server, timeout,
-   malformed response) into distinct exceptions and retry only the
-   transient ones (429 / 5xx / connect / read timeout).
-2. **Key safety.** The API key is read from the ``API_KEY`` environment
-   variable by default and is never written to logs, exception messages,
-   or response bodies.
-3. **Testability.** The underlying ``httpx.AsyncClient`` can be injected
-   so tests can use ``httpx.MockTransport`` instead of real HTTP.
+1. **健壮性。** 把各类失败（鉴权、限流、服务端、超时、响应格式错误）
+   归类为不同的异常，并且只对临时性失败（429 / 5xx / 连接 / 读取超时）
+   做重试。
+2. **密钥安全。** API 密钥默认从 ``API_KEY`` 环境变量读取，绝不写入日志、
+   异常消息或响应体。
+3. **可测试性。** 底层的 ``httpx.AsyncClient`` 可以注入，方便测试用
+   ``httpx.MockTransport`` 替代真实 HTTP。
 
-Example
+示例
 -------
 ::
 
@@ -50,50 +49,49 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Errors
+# 错误
 # ---------------------------------------------------------------------------
 
 
 class LlmError(Exception):
-    """Base class for all LlmClient errors."""
+    """所有 LlmClient 错误的基类。"""
 
 
 class LlmAuthError(LlmError):
-    """401/403 - the API key is missing, invalid, or unauthorized."""
+    """401/403 - API 密钥缺失、无效或未授权。"""
 
 
 class LlmRateLimitError(LlmError):
-    """429 - rate limited; raised only after retries are exhausted."""
+    """429 - 触发限流；仅在重试全部耗尽后才抛出。"""
 
 
 class LlmServerError(LlmError):
-    """5xx - server-side failure; raised only after retries are exhausted."""
+    """5xx - 服务端失败；仅在重试全部耗尽后才抛出。"""
 
 
 class LlmTimeoutError(LlmError):
-    """Connect or read timeout; raised only after retries are exhausted."""
+    """连接或读取超时；仅在重试全部耗尽后才抛出。"""
 
 
 class LlmResponseFormatError(LlmError):
-    """The response body is not a valid chat-completion payload."""
+    """响应体不是一个合法的对话补全结果。"""
 
 
 # ---------------------------------------------------------------------------
-# Result
+# 结果
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class LlmResult:
-    """Successful chat-completion result.
+    """一次成功的对话补全结果。
 
     Attributes:
-        text: the assistant's reply.
-        model: the model name echoed by the server (may differ from the
-            request when the gateway falls back to a default model).
-        elapsed_ms: wall-clock duration of the call, including any retries.
-        usage: optional token-usage dict from the server
-            (e.g. ``{"prompt_tokens": 12, "completion_tokens": 4, "total_tokens": 16}``).
+        text: 模型的回复文本。
+        model: 服务端回显的模型名（当网关回退到默认模型时，可能与请求的不同）。
+        elapsed_ms: 调用所花的墙上时钟时间，包含任何重试。
+        usage: 服务端返回的可选 token 用量字典
+            （例如 ``{"prompt_tokens": 12, "completion_tokens": 4, "total_tokens": 16}``）。
     """
 
     text: str
@@ -102,31 +100,31 @@ class LlmResult:
     usage: dict[str, int] | None = None
 
     def __repr__(self) -> str:
-        # ``text`` is truncated so a long reply doesn't blow up logs.
+        # ``text`` 做截断，避免超长回复把日志撑爆。
         snippet = self.text[:40] + ("..." if len(self.text) > 40 else "")
         return f"LlmResult(model={self.model!r}, elapsed_ms={self.elapsed_ms}, text={snippet!r})"
 
 
 # ---------------------------------------------------------------------------
-# Client
+# 客户端
 # ---------------------------------------------------------------------------
 
 RETRYABLE_STATUS: frozenset[int] = frozenset({408, 429, 500, 502, 503, 504})
-"""HTTP status codes that should trigger a retry with exponential backoff.
+"""应当触发指数退避重试的 HTTP 状态码。
 
-We retry 429 (rate limit) and 5xx (server hiccup); 408 means "we were too
-slow uploading", which is also worth another shot. Everything else
-(400/401/403/404/...) is a client mistake and would fail the same way again.
+重试 429（限流）和 5xx（服务端抖动）；408 表示「我们上传太慢」，
+也值得再试一次。其它（400/401/403/404/...）都是客户端错误，
+重试也会得到同样的结果。
 """
 
 DEFAULT_MAX_RETRIES = 2
-"""Default number of retry attempts after the first failure (0 = no retry)."""
+"""首次失败后默认的额外重试次数（0 表示不重试）。"""
 
 DEFAULT_RETRY_BACKOFF = 0.5
-"""Base backoff in seconds. Real delay is ``base * 2 ** attempt``."""
+"""退避基准秒数。实际延迟为 ``base * 2 ** attempt``。"""
 
 DEFAULT_TIMEOUT = 30.0
-"""Default per-request timeout in seconds."""
+"""每次请求的默认超时（秒）。"""
 
 
 def _elapsed_ms(started: float) -> int:
@@ -134,25 +132,25 @@ def _elapsed_ms(started: float) -> int:
 
 
 class LlmClient:
-    """Asynchronous chat-completions client.
+    """异步对话补全客户端。
 
-    The client owns a private :class:`httpx.AsyncClient` unless one is
-    injected via ``client=`` (used by tests with ``httpx.MockTransport``).
-    The instance is also an async context manager::
+    客户端自身持有一个私有的 :class:`httpx.AsyncClient`，除非通过 ``client=``
+    注入一个（测试用 ``httpx.MockTransport`` 时就是注入）。该实例同时也是一个
+    异步上下文管理器::
 
         async with LlmClient(base_url=..., model=...) as llm:
             result = await llm.chat([...])
 
     Args:
-        base_url: OpenAI-compatible base URL (no trailing slash).
-        model: default model identifier.
-        api_key: explicit key. If ``None`` (default), read from env.
-        env_var: name of the env var to read when ``api_key`` is ``None``.
-        timeout_seconds: per-request timeout.
-        max_retries: how many times to retry on transient failure.
-        retry_backoff: base backoff in seconds; real delay is
-            ``retry_backoff * 2 ** attempt``.
-        client: optional :class:`httpx.AsyncClient` (used by tests).
+        base_url: OpenAI 兼容的 base URL（不带结尾斜杠）。
+        model: 默认模型标识。
+        api_key: 显式传入的密钥。如果为 ``None``（默认），则从环境变量读取。
+        env_var: 当 ``api_key`` 为 ``None`` 时读取的环境变量名。
+        timeout_seconds: 每次请求的超时。
+        max_retries: 遇到临时失败时重试的次数。
+        retry_backoff: 退避基准秒数；实际延迟为
+            ``retry_backoff * 2 ** attempt``。
+        client: 可选注入的 :class:`httpx.AsyncClient`（用于测试）。
     """
 
     def __init__(
@@ -177,7 +175,7 @@ class LlmClient:
             msg = "max_retries must be >= 0"
             raise ValueError(msg)
 
-        # API key resolution: explicit arg wins, otherwise env.
+        # API 密钥解析：显式传入优先，否则读环境变量。
         if api_key is None:
             api_key = os.environ.get(env_var)
         if not api_key:
@@ -207,7 +205,7 @@ class LlmClient:
         return self._timeout
 
     async def aclose(self) -> None:
-        """Close the owned ``httpx.AsyncClient`` (no-op if injected)."""
+        """关闭自身持有的 :class:`httpx.AsyncClient`（若客户端是注入的则为空操作）。"""
         if self._owns_client:
             await self._client.aclose()
 
@@ -224,26 +222,26 @@ class LlmClient:
         model: str | None = None,
         extra_body: dict[str, Any] | None = None,
     ) -> LlmResult:
-        """Send a chat-completions request and return the parsed result.
+        """发起一次对话补全请求并返回解析后的结果。
 
         Args:
-            messages: non-empty list of ``{"role": ..., "content": ...}`` dicts.
-            model: optional per-call override of the default model.
-            extra_body: optional fields merged into the JSON body
-                (e.g. ``{"temperature": 0.2}``).
+            messages: 非空的 ``{"role": ..., "content": ...}`` 字典列表。
+            model: 可选，单次调用时覆盖默认模型。
+            extra_body: 可选，合并进 JSON body 的额外字段
+                （例如 ``{"temperature": 0.2}``）。
 
         Returns:
-            :class:`LlmResult` with text, model, elapsed_ms, and (if the
-            server returned one) usage.
+            :class:`LlmResult`，包含 text、model、elapsed_ms，以及（若服务端
+            返回了的话）usage。
 
         Raises:
-            LlmAuthError: 401/403, or missing API key.
-            LlmRateLimitError: 429 after all retries exhausted.
-            LlmServerError: 5xx after all retries exhausted.
-            LlmTimeoutError: connect/read timeout after all retries exhausted.
-            LlmResponseFormatError: response is not a valid chat-completion.
-            LlmError: any other 4xx (e.g. 400 bad request, 404 not found).
-            ValueError: ``messages`` is empty.
+            LlmAuthError: 401/403，或缺失 API 密钥。
+            LlmRateLimitError: 重试耗尽后的 429。
+            LlmServerError: 重试耗尽后的 5xx。
+            LlmTimeoutError: 重试耗尽后的连接/读取超时。
+            LlmResponseFormatError: 响应不是合法的对话补全结果。
+            LlmError: 任何其它 4xx（例如 400 错误请求、404 未找到）。
+            ValueError: ``messages`` 为空。
         """
         if not messages:
             msg = "messages must be a non-empty list"
@@ -270,8 +268,7 @@ class LlmClient:
                 response = await self._client.post(url, json=body, headers=headers)
             except httpx.TimeoutException as exc:
                 elapsed_ms = _elapsed_ms(started)
-                # Never include the URL/key in this message; the body itself
-                # is enough for diagnosis.
+                # 该消息里绝不带入 URL/密钥；光看 body 本身已足够诊断。
                 logger.warning(
                     "llm timeout attempt=%d elapsed_ms=%d err=%s",
                     attempt + 1,
@@ -305,8 +302,8 @@ class LlmClient:
             if status == 200:
                 return self._parse_response(response, elapsed_ms, used_model)
 
-            # Non-200 path: log status + brief body, NEVER the request headers
-            # (so the API key can never leak through logs).
+            # 非 200 分支：记录状态码和简短的 body，但绝不记录请求头
+            # （这样密钥就绝不会通过日志泄漏）。
             body_snippet = self._redact((response.text or "")[:200])
             logger.warning(
                 "llm http=%d attempt=%d elapsed_ms=%d body=%s",
@@ -329,7 +326,7 @@ class LlmClient:
             if 500 <= status < 600:
                 raise LlmServerError(f"server error {status}: {body_snippet}")
 
-            # Other 4xx (400, 404, ...): client error, no retry.
+            # 其它 4xx（400、404 等）：客户端错误，不重试。
             raise LlmError(f"http {status}: {body_snippet}")
 
     async def _sleep_backoff(self, attempt: int) -> None:
@@ -337,11 +334,10 @@ class LlmClient:
         await asyncio.sleep(delay)
 
     def _redact(self, text: str) -> str:
-        """Replace the API key with ``[REDACTED]`` to keep it out of logs/excs.
+        """把 API 密钥替换成 ``[REDACTED]``，避免它进入日志或异常。
 
-        Defends against a buggy or malicious server that echoes our key
-        in the response body, an upstream error wrapper, or a proxy
-        that appends request headers to its error page.
+        防御对象是：有 bug 或恶意的服务器在我们的响应体里原样回显密钥、
+        上游错误包装器、或把请求头附到错误页上的代理。
         """
         if self._api_key and self._api_key in text:
             return text.replace(self._api_key, "[REDACTED]")

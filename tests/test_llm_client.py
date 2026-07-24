@@ -1,8 +1,8 @@
-"""Tests for :mod:`src.llm_client`.
+"""针对 :mod:`src.llm_client` 的测试。
 
-All tests use ``httpx.MockTransport`` so the suite never hits the network.
-The injected :class:`httpx.AsyncClient` lets each test fully control
-status codes, response bodies, and even transport-level exceptions.
+所有测试都使用 ``httpx.MockTransport``，因此测试套件永远不会触网。
+注入的 :class:`httpx.AsyncClient` 让每个测试都能完全控制状态码、响应体，
+乃至传输层级别的异常。
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from llm_client import (
 )
 
 # ---------------------------------------------------------------------------
-# Helpers
+# 辅助函数
 # ---------------------------------------------------------------------------
 
 
@@ -34,13 +34,13 @@ def _make_client(
     handler: Callable[[httpx.Request], httpx.Response],
     **kwargs,
 ) -> LlmClient:
-    """Build a ``LlmClient`` whose HTTP layer is fully mocked.
+    """构造一个 HTTP 层被完全 mock 掉的 ``LlmClient``。
 
-    Pass ``api_key=...`` to override the default ``"test-key"``.
+    传入 ``api_key=...`` 可覆盖默认的 ``"test-key"``。
     """
     transport = httpx.MockTransport(handler)
     http_client = httpx.AsyncClient(transport=transport)
-    # ``api_key`` is consumed here; everything else flows through as kwargs.
+    # ``api_key`` 在这里被消费；其余参数原样透传。
     api_key = kwargs.pop("api_key", "test-key")
     return LlmClient(
         base_url="https://api.example.com/v1",
@@ -53,7 +53,7 @@ def _make_client(
 
 
 def _ok_handler(body: dict | None = None) -> Callable[[httpx.Request], httpx.Response]:
-    """Default 200 OK handler echoing a valid chat-completion payload."""
+    """默认的 200 OK 处理器，回显一个合法的对话补全结果。"""
     payload = body or {
         "id": "chatcmpl-1",
         "model": "ai-mini",
@@ -70,7 +70,7 @@ def _ok_handler(body: dict | None = None) -> Callable[[httpx.Request], httpx.Res
 
 
 # ---------------------------------------------------------------------------
-# Happy path
+# 正常路径
 # ---------------------------------------------------------------------------
 
 
@@ -179,7 +179,7 @@ async def test_chat_extra_body_merges_into_request() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Auth (4xx, no retry)
+# 鉴权（4xx，不重试）
 # ---------------------------------------------------------------------------
 
 
@@ -211,11 +211,11 @@ async def test_401_is_not_retried() -> None:
     client = _make_client(handler, max_retries=3)
     with pytest.raises(LlmAuthError):
         await client.chat([{"role": "user", "content": "hi"}])
-    assert calls["n"] == 1  # 401 must NOT trigger retry
+    assert calls["n"] == 1  # 401 绝不能触发重试
 
 
 # ---------------------------------------------------------------------------
-# Rate limit (429, retry)
+# 限流（429，重试）
 # ---------------------------------------------------------------------------
 
 
@@ -229,7 +229,7 @@ async def test_429_retries_then_raises() -> None:
     client = _make_client(handler, max_retries=2, retry_backoff=0.001)
     with pytest.raises(LlmRateLimitError, match="rate limited"):
         await client.chat([{"role": "user", "content": "hi"}])
-    assert calls["n"] == 3  # initial + 2 retries
+    assert calls["n"] == 3  # 首次 + 2 次重试
 
 
 async def test_429_eventually_succeeds() -> None:
@@ -257,7 +257,7 @@ async def test_429_eventually_succeeds() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 5xx (retry)
+# 5xx（重试）
 # ---------------------------------------------------------------------------
 
 
@@ -271,7 +271,7 @@ async def test_500_retries_then_raises() -> None:
     client = _make_client(handler, max_retries=1, retry_backoff=0.001)
     with pytest.raises(LlmServerError, match="500"):
         await client.chat([{"role": "user", "content": "hi"}])
-    assert calls["n"] == 2  # initial + 1 retry
+    assert calls["n"] == 2  # 首次 + 1 次重试
 
 
 async def test_503_retries_then_succeeds() -> None:
@@ -299,7 +299,7 @@ async def test_503_retries_then_succeeds() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Timeouts
+# 超时
 # ---------------------------------------------------------------------------
 
 
@@ -330,7 +330,7 @@ async def test_read_timeout_retries_then_raises() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Response format errors
+# 响应格式错误
 # ---------------------------------------------------------------------------
 
 
@@ -368,7 +368,7 @@ async def test_non_string_content_raises_format_error() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Other 4xx
+# 其它 4xx
 # ---------------------------------------------------------------------------
 
 
@@ -386,7 +386,7 @@ async def test_400_not_retried_and_raises_llm_error() -> None:
 
 
 # ---------------------------------------------------------------------------
-# API key handling
+# API 密钥处理
 # ---------------------------------------------------------------------------
 
 
@@ -425,11 +425,11 @@ async def test_missing_api_key_raises_auth_error(monkeypatch: pytest.MonkeyPatch
 
 
 async def test_api_key_never_logged(caplog: pytest.LogCaptureFixture) -> None:
-    """Even on a 500, the API key value must never appear in any log line."""
+    """即便遇到 500，API 密钥的值也绝不能出现在任何日志行里。"""
     secret = "sk-THISMUSTNOTAPPEAR1234567890"
 
     def handler(request: httpx.Request) -> httpx.Response:
-        # The server may echo our body, so we leak the key there on purpose.
+        # 服务端可能会原样回显我们的 body，所以我们故意把密钥泄漏在那里。
         return httpx.Response(500, text=f"server saw key={secret}")
 
     client = _make_client(handler, api_key=secret, max_retries=0)
@@ -439,7 +439,7 @@ async def test_api_key_never_logged(caplog: pytest.LogCaptureFixture) -> None:
 
 
 async def test_api_key_not_in_exception_message() -> None:
-    """Exception text must not contain the key, even when the server echoes it."""
+    """异常文本里不能包含密钥，即便服务端把它回显出来也不行。"""
     secret = "sk-THISMUSTNOTAPPEAR1234567890"
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -452,7 +452,7 @@ async def test_api_key_not_in_exception_message() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Context manager
+# 上下文管理器
 # ---------------------------------------------------------------------------
 
 
@@ -464,7 +464,7 @@ async def test_async_context_manager() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Input validation
+# 输入校验
 # ---------------------------------------------------------------------------
 
 

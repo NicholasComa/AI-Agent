@@ -1,34 +1,33 @@
-"""Day 2 - typed application configuration.
+"""Day 2 - 带类型的应用配置。
 
-Defines :class:`AppConfig` (a :class:`pydantic.BaseModel`) and helpers to
-load it from either the process environment or a JSON file, and to dump it
-back to JSON.
+定义 :class:`AppConfig`（基于 :class:`pydantic.BaseModel`）以及从进程环境变量
+或 JSON 文件加载它、再把它导出为 JSON 的辅助函数。
 
-Usage
+用法
 -----
-As a module::
+作为模块使用::
 
     from src.config import load_config
 
-    cfg = load_config()  # env -> config.json fallback
+    cfg = load_config()  # 环境变量优先，回退到 config.json
     print(cfg.model_name, cfg.api_base_url)
 
-From the command line (smoke test)::
+从命令行（冒烟测试）::
 
     uv run python -m src.config --source auto --path config.json
 
-Resolution rules (``source="auto"``)
+解析规则（``source="auto"``）
 ------------------------------------
-1. Read every field whose matching environment variable is set and non-empty.
-   Field name -> env var name is just ``field.upper()``.
-2. If at least one env var is set, the result is fed straight into
-   :class:`AppConfig`; missing required fields raise
-   :class:`pydantic.ValidationError`.
-3. If no env vars are set, fall back to ``config.json`` (the project's
-   working directory by default).
+1. 读取每一个已设置且非空的、与字段同名的环境变量。
+   字段名 -> 环境变量名就是 ``field.upper()``。
+2. 只要设置了至少一个环境变量，就把结果直接喂给
+   :class:`AppConfig`；缺失的必填字段会触发
+   :class:`pydantic.ValidationError`。
+3. 如果没设置任何环境变量，则回退到 ``config.json``（默认是项目的
+   工作目录）。
 
-Failure modes are explicit: no environment *and* no file -> the helper
-raises. It never silently returns a partially-initialised model.
+失败模式是显式的：既没有环境变量 *也* 没有文件 -> 辅助函数直接抛错。
+绝不悄悄返回一个只初始化了一半的模型。
 """
 
 from __future__ import annotations
@@ -41,16 +40,15 @@ from typing import Any, Literal
 from pydantic import BaseModel, ValidationError
 
 # ---------------------------------------------------------------------------
-# Model
+# 模型
 # ---------------------------------------------------------------------------
 
 
 class AppConfig(BaseModel):
-    """Application configuration.
+    """应用配置。
 
-    Only ``app_name`` has a default; the other fields are required when the
-    config is loaded from environment or JSON, and the helper will surface
-    :class:`pydantic.ValidationError` if any of them is missing.
+    只有 ``app_name`` 有默认值；其余字段从环境变量或 JSON 加载时都是必填项，
+    如果缺失，辅助函数会抛出 :class:`pydantic.ValidationError`。
     """
 
     app_name: str = "week01-ai-basics"
@@ -60,7 +58,7 @@ class AppConfig(BaseModel):
     enable_stream: bool = False
 
     def env_var_name(self, field: str) -> str:
-        """Return the environment variable name that maps to ``field``."""
+        """返回映射到 ``field`` 的环境变量名。"""
         if field not in type(self).model_fields:
             msg = f"unknown field: {field!r}"
             raise KeyError(msg)
@@ -68,17 +66,17 @@ class AppConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Loaders / writers
+# 加载器 / 写出器
 # ---------------------------------------------------------------------------
 
 Source = Literal["env", "json", "auto"]
 
 
 def _read_env(env: dict[str, str] | None = None) -> dict[str, Any]:
-    """Collect env-var values for every declared field.
+    """收集每个已声明字段对应的环境变量值。
 
-    Empty strings are treated as "not set" so that an empty ``API_BASE_URL=``
-    in the environment does not silently overwrite a JSON-sourced value.
+    空字符串被视为「未设置」，这样环境里一个空的 ``API_BASE_URL=``
+    不会悄悄覆盖掉 JSON 来源的值。
     """
     source = os.environ if env is None else env
     out: dict[str, Any] = {}
@@ -90,7 +88,7 @@ def _read_env(env: dict[str, str] | None = None) -> dict[str, Any]:
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    """Read and parse a JSON object from ``path``."""
+    """从 ``path`` 读取并解析一个 JSON 对象。"""
     if not path.exists():
         msg = f"config file not found: {path}"
         raise FileNotFoundError(msg)
@@ -116,28 +114,24 @@ def load_config(
     *,
     env: dict[str, str] | None = None,
 ) -> AppConfig:
-    """Load :class:`AppConfig` from env, file, or both.
+    """从环境变量、文件，或两者加载 :class:`AppConfig`。
 
     Args:
-        source: ``"env"`` forces environment-only; ``"json"`` forces
-            file-only; ``"auto"`` (default) tries env first and falls
-            back to ``config_path``.
-        config_path: Path to the JSON file (used when ``source`` is
-            ``"json"`` or ``"auto"``).
-        env: Optional override for ``os.environ`` (handy for tests and
-            notebook demos). Ignored when ``source == "json"``.
+        source: ``"env"`` 强制只从环境变量读；``"json"`` 强制只从文件读；
+            ``"auto"``（默认）先尝试环境变量，再回退到 ``config_path``。
+        config_path: JSON 文件路径（当 ``source`` 为 ``"json"`` 或
+            ``"auto"`` 时用到）。
+        env: 可选，用于覆盖 ``os.environ``（方便测试和笔记本演示）。
+            当 ``source == "json"`` 时忽略。
 
     Returns:
-        A validated :class:`AppConfig`.
+        经过校验的 :class:`AppConfig`。
 
     Raises:
-        pydantic.ValidationError: a required field is missing or has the
-            wrong type. Pydantic's error message lists the offending
-            field, expected type, and the bad value.
-        FileNotFoundError: ``source == "json"`` (or auto-fallback) and
-            the file does not exist.
-        ValueError: the file exists but is malformed or its top-level
-            JSON value is not an object.
+        pydantic.ValidationError: 某个必填字段缺失或类型错误。Pydantic 的
+            报错信息会列出有问题的字段、期望类型和错误取值。
+        FileNotFoundError: ``source == "json"``（或 auto 回退）且文件不存在。
+        ValueError: 文件存在但格式错误，或顶层 JSON 值不是对象。
     """
     path = Path(config_path)
     if source == "env":
@@ -151,21 +145,21 @@ def load_config(
         raise ValueError(msg)
 
     if not data and source == "auto" and not path.exists():
-        # _read_json already raised in this branch, but be defensive in
-        # case a future refactor changes that.
+        # 本分支里 _read_json 已经会抛错，这里再做一次防御，
+        # 以防将来的重构改变了它的行为。
         msg = (
             "no configuration found: set environment variables (MODEL_NAME, "
             "API_BASE_URL, ...) or create a config.json at the project root"
         )
         raise FileNotFoundError(msg)
 
-    # Let pydantic do the heavy lifting; its ValidationError is the
-    # "explicit error" we promise.
+    # 交给 pydantic 做重活；它抛出的 ValidationError 就是
+    # 我们承诺的「显式错误」。
     return AppConfig(**data)
 
 
 def dump_config(cfg: AppConfig, path: Path | str, *, indent: int = 2) -> None:
-    """Serialise ``cfg`` to ``path`` as pretty-printed UTF-8 JSON."""
+    """把 ``cfg`` 以美化后的 UTF-8 JSON 形式写到 ``path``。"""
     p = Path(path)
     p.write_text(
         json.dumps(cfg.model_dump(mode="json"), indent=indent, ensure_ascii=False) + "\n",
@@ -174,24 +168,24 @@ def dump_config(cfg: AppConfig, path: Path | str, *, indent: int = 2) -> None:
 
 
 # ---------------------------------------------------------------------------
-# CLI smoke test
+# CLI 冒烟测试
 # ---------------------------------------------------------------------------
 
 
 def _main(argv: list[str] | None = None) -> int:
     import argparse
 
-    parser = argparse.ArgumentParser(description="Load and print AppConfig.")
+    parser = argparse.ArgumentParser(description="加载并打印 AppConfig。")
     parser.add_argument(
         "--source",
         choices=("env", "json", "auto"),
         default="auto",
-        help="where to read the config from (default: env -> json fallback)",
+        help="从哪里读取配置（默认：环境变量 -> 回退到 JSON）",
     )
     parser.add_argument(
         "--path",
         default="config.json",
-        help="JSON config path (default: ./config.json)",
+        help="JSON 配置文件路径（默认：./config.json）",
     )
     args = parser.parse_args(argv)
 
