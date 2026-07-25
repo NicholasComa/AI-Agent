@@ -17,11 +17,11 @@
 - **Day 4 · 结构化输出**：定义 `src/schemas.py`（`RequirementAnalysis` 等输出模型）与 `src/prompts.py`（系统提示 + 消息构造），开启 JSON Mode 做结构化需求分析，配套 `tests/test_structured_output.py` 与真实 ollama 验证脚本。
 - **Day 5 · FastAPI 服务**：交付 `src/app.py`（应用工厂 + `/health` `/chat` `/analyze-requirement` 三端点 + 统一异常处理）与 `src/main.py`（入口），用 Pydantic 做请求/响应校验，全部异常收敛为统一的 `ErrorResponse` 信封；配套 `tests/test_api.py`（20 用例，全仓累计 65 用例）。
 
-**核心交付能力**
+**最终实现**
 
 - 一个最小 FastAPI 服务，暴露健康检查、对话转发、结构化需求分析三个端点；
-- 统一的错误信封（`code` + `message` + `detail`），不向客户端泄露密钥与内部细节；
-- 完整的质量基线：截至 Day 5，`ruff` 全绿、`pytest` 65 passed。
+- 统一的错误信封（`code` + `message` + `detail`+`HTTP状态码`），不向客户端泄露密钥与内部细节；
+- 完整的测试验证：截至 Day 5，`ruff` 通过、`pytest` 65条通过。
 
 ---
 
@@ -129,12 +129,21 @@ uv run python main.py
 uv run fastapi dev src/main.py      # 开发模式（自动重载）
 uv run fastapi run src/main.py      # 生产模式
 ```
+第一次使用`uv`运行需要执行:
+```bash
+uv init --python 3.12
+uv add httpx pydantic python-dotenv fastapi "uvicorn[standard]"
+uv add --dev ruff pytest
+uv run python --version
+uv run ruff --version
+uv run pytest --version
+```
 
 > 命令运行环境说明：
 > - `mkdir` / `cp` / `rm` 走 **Git Bash**。
 > - `copy` / `del` / `dir` 走 **cmd**。
 > - `uv add` / `uv run` 在以上两种环境下命令一致。
-
+> - fastapi也可以用这个安装：`uv pip install "fastapi[standard]"`。
 ---
 
 ## 6. API 服务
@@ -168,7 +177,7 @@ uv run fastapi run src/main.py      # 生产模式
 | `llm_error`            | 502 | 其它 `LlmError` |
 | `internal_error`       | 500 | 未捕获异常（兜底） |
 
-启动命令：
+启动 Fastapi 服务器命令：
 
 ```bash
 # 开发模式（自动重载）
@@ -182,6 +191,58 @@ uv run python src/main.py
 ```
 
 > 端点都**不写** API key 到日志 / 异常消息 / 响应体；`/health` 只返回 `key_configured: true/false`。
+
+启动成功后显示后台服务页面：
+
+```bash
+ ⚡️ Starting FastAPI in development mode
+
+ 🐍 Using import string: main:app
+
+ 🌐 Server started at http://127.0.0.1:8000
+    Documentation at http://127.0.0.1:8000/docs
+
+  Logs:
+
+ ▕  Will watch for changes in these directories: ['D:\\workspace\\py_ai\\week01_ai_basics']
+ ▕  Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+ ▕  Started reloader process [12192] using WatchFiles
+ ▕  Started server process [16256]
+ ▕  Waiting for application startup.
+ ▕  Application startup complete.
+```
+
+此时可以直接使用Fastapi自带的交互式API文档：http://127.0.0.1:8000/docs， 或者可以打开另一个终端输入指令进行对话。
+```bash
+#health记录：
+curl -s http://127.0.0.1:8000/health | python -m json.tool
+
+
+#chat示例:
+cat > req.json <<'EOF'
+{"messages":[{"role":"user","content":"用一句话介绍你自己"}]}
+EOF
+
+curl -s -X POST http://127.0.0.1:8000/chat \
+  -H "Content-Type: application/json" \
+  -d @req.json
+
+#analyze-requirement示例:
+cat > req2.json <<'EOF'
+{"text":"我要做一个员工请假系统，支持手机端提交申请和领导审批"}
+EOF
+
+curl -s -X POST http://127.0.0.1:8000/analyze-requirement \
+  -H "Content-Type: application/json" \
+  -d @req2.json
+
+#测试“输入校验失败”：
+curl -s -X POST http://127.0.0.1:8000/chat \
+  -H "Content-Type: application/json" -d '{"messages":[]}'
+
+#测试“路径不存在”:
+curl -s http://127.0.0.1:8000/nope
+```
 
 ---
 

@@ -165,7 +165,7 @@ week01_ai_basics/
   - `GET /health` → 200，返回 `status/version/model{name,base_url,timeout,key_configured}`
   - `POST /chat`（ollama 在跑）→ 200，返回真实模型文本 + `elapsed_ms` + `usage`
   - `POST /analyze-requirement`（ollama 在跑）→ 200，返回 `RequirementAnalysis` 结构（如 `category=mobile`）
-- 运行截图见文末“十、运行截图索引“（覆盖 health / chat / analyze / 422 / 404 / ruff / pytest 等）。
+- 运行截图![fastapi](./poho/fastapi.png)。
 
 ### 7.2 异常场景
 
