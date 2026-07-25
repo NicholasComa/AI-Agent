@@ -212,7 +212,7 @@ uv run python src/main.py
  ▕  Application startup complete.
 ```
 
-此时可以直接使用Fastapi自带的交互式API文档：http://127.0.0.1:8000/docs， 或者可以打开另一个终端输入指令进行对话。
+此时可以直接使用Fastapi自带的交互式API文档：http://127.0.0.1:8000/docs ，或者可以打开另一个终端输入指令进行对话。
 ```bash
 #health记录：
 curl -s http://127.0.0.1:8000/health | python -m json.tool
