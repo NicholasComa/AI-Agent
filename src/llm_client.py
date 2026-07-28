@@ -1,7 +1,14 @@
-"""Day 3 - 异步 LLM 对话补全客户端。
+"""Day 3 + Day 7 - 异步 LLM 对话补全客户端（流式 + 协议实现）。
 
 该客户端是对一个 OpenAI 兼容的 ``POST /chat/completions`` 接口的一层
-轻量异步封装。它专注三件事：
+轻量异步封装。Day 7 升级:
+
+1. **SSE 流式输出**。新增 :meth:`LlmClient.chat_stream` —— 解析 ``data: {...}``
+   增量,逐个 ``yield`` ``delta.content``,遇 ``data: [DONE]`` 停止。
+2. **协议实现**。:class:`LlmClient` 自动满足 :class:`model_client.ModelClient`
+   协议（结构子类型,无需继承）。后续路由层、fake 实现都基于该协议。
+
+它仍然专注三件事：
 
 1. **健壮性。** 把各类失败（鉴权、限流、服务端、超时、响应格式错误）
    归类为不同的异常，并且只对临时性失败（429 / 5xx / 连接 / 读取超时）
@@ -27,8 +34,13 @@
             model=cfg.model_name,
             timeout_seconds=cfg.timeout_seconds,
         ) as llm:
+            # 一次性调用
             result = await llm.chat([{"role": "user", "content": "你好"}])
             print(result.text, result.model, result.elapsed_ms)
+
+            # 流式调用
+            async for delta in llm.chat_stream([{"role": "user", "content": "写首短诗"}]):
+                print(delta, end="", flush=True)
 
 
     asyncio.run(main())
@@ -37,9 +49,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -328,6 +342,166 @@ class LlmClient:
 
             # 其它 4xx（400、404 等）：客户端错误，不重试。
             raise LlmError(f"http {status}: {body_snippet}")
+
+    async def chat_stream(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        model: str | None = None,
+        extra_body: dict[str, Any] | None = None,
+    ) -> AsyncIterator[str]:
+        """发起一次流式对话补全，逐个 yield 增量文本片段。
+
+        通过 OpenAI 兼容接口的 ``stream: true`` + SSE（``text/event-stream``）
+        协议获取增量回复。SSE 格式::
+
+            data: {"choices":[{"delta":{"content":"你"}}]}\\n\\n
+            data: {"choices":[{"delta":{"content":"好"}}]}\\n\\n
+            data: [DONE]\\n\\n
+
+        本方法对每个非空 ``delta.content`` 调一次 ``yield``。
+
+        **重试边界（重要）**：仅在"打开流连接"阶段（连接错误、读取超时、
+        非 200 状态码）按 ``max_retries`` 整体重试。一旦成功开始 ``yield``
+        delta，则不再重试——因为已有内容已交付消费者，整体重试会重复。
+
+        Args:
+            messages: 非空的 ``{"role": ..., "content": ...}`` 字典列表。
+            model: 可选，单次调用时覆盖默认模型。
+            extra_body: 可选，合并进 JSON body 的额外字段
+                （例如 ``{"temperature": 0.2}``）。
+
+        Yields:
+            每段增量文本。
+
+        Raises:
+            LlmAuthError: 401/403（不重试）。
+            LlmRateLimitError: 重试耗尽后的 429。
+            LlmServerError: 重试耗尽后的 5xx。
+            LlmTimeoutError: 重试耗尽后的连接/读取超时。
+            LlmResponseFormatError: SSE 事件 JSON 非法或形状不对。
+            LlmError: 任何其它 4xx（例如 400/404）。
+            ValueError: ``messages`` 为空。
+        """
+        if not messages:
+            msg = "messages must be a non-empty list"
+            raise ValueError(msg)
+
+        url = f"{self._base_url}/chat/completions"
+        used_model = model or self._model
+        body: dict[str, Any] = {
+            "model": used_model,
+            "messages": list(messages),
+            "stream": True,
+        }
+        if extra_body:
+            body.update(extra_body)
+
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+        }
+
+        attempt = 0
+        while True:
+            started = time.perf_counter()
+            try:
+                async with self._client.stream(
+                    "POST",
+                    url,
+                    json=body,
+                    headers=headers,
+                ) as response:
+                    elapsed_ms = _elapsed_ms(started)
+                    status = response.status_code
+
+                    if status != 200:
+                        # 把错误响应体完整读出来用于日志/异常
+                        await response.aread()
+                        body_snippet = self._redact((response.text or "")[:200])
+                        logger.warning(
+                            "llm stream http=%d attempt=%d elapsed_ms=%d body=%s",
+                            status,
+                            attempt + 1,
+                            elapsed_ms,
+                            body_snippet,
+                        )
+
+                        if status in (401, 403):
+                            raise LlmAuthError(f"authentication failed ({status}): {body_snippet}")
+
+                        if status in RETRYABLE_STATUS and attempt < self._max_retries:
+                            await self._sleep_backoff(attempt)
+                            attempt += 1
+                            continue
+
+                        if status == 429:
+                            raise LlmRateLimitError(f"rate limited: {body_snippet}")
+                        if 500 <= status < 600:
+                            raise LlmServerError(f"server error {status}: {body_snippet}")
+
+                        raise LlmError(f"http {status}: {body_snippet}")
+
+                    # 200：开始按行解析 SSE
+                    async for line in response.aiter_lines():
+                        # SSE 注释行 / 心跳 / 空行：跳过
+                        if not line or line.startswith(":"):
+                            continue
+                        if not line.startswith("data: "):
+                            continue
+
+                        payload = line[len("data: ") :]
+                        if payload == "[DONE]":
+                            return
+
+                        try:
+                            event = json.loads(payload)
+                        except json.JSONDecodeError as exc:
+                            msg = f"SSE event is not valid JSON: {exc}"
+                            raise LlmResponseFormatError(msg) from exc
+
+                        try:
+                            delta = event["choices"][0]["delta"].get("content", "")
+                        except (KeyError, IndexError, TypeError) as exc:
+                            msg = f"missing 'choices[0].delta.content' in SSE event: {exc}"
+                            raise LlmResponseFormatError(msg) from exc
+
+                        if not isinstance(delta, str):
+                            msg = f"'delta.content' must be a string, got {type(delta).__name__}"
+                            raise LlmResponseFormatError(msg)
+
+                        if delta:
+                            yield delta
+
+                    return  # 流正常结束
+            except httpx.TimeoutException as exc:
+                elapsed_ms = _elapsed_ms(started)
+                logger.warning(
+                    "llm stream timeout attempt=%d elapsed_ms=%d err=%s",
+                    attempt + 1,
+                    elapsed_ms,
+                    exc,
+                )
+                if attempt < self._max_retries:
+                    await self._sleep_backoff(attempt)
+                    attempt += 1
+                    continue
+                msg = f"stream timed out after {attempt + 1} attempts"
+                raise LlmTimeoutError(msg) from exc
+            except httpx.ConnectError as exc:
+                elapsed_ms = _elapsed_ms(started)
+                logger.warning(
+                    "llm stream connect error attempt=%d elapsed_ms=%d err=%s",
+                    attempt + 1,
+                    elapsed_ms,
+                    exc,
+                )
+                if attempt < self._max_retries:
+                    await self._sleep_backoff(attempt)
+                    attempt += 1
+                    continue
+                msg = f"stream connect failed after {attempt + 1} attempts"
+                raise LlmTimeoutError(msg) from exc
 
     async def _sleep_backoff(self, attempt: int) -> None:
         delay = self._retry_backoff * (2**attempt)
