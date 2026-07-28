@@ -265,7 +265,9 @@ def _json_error(
     detail: str | None = None,
 ) -> JSONResponse:
     """构造一个带标准错误信封的 :class:`JSONResponse`。"""
-    payload = ErrorResponse(error=ErrorBody(code=code, message=message, detail=detail, status_code=http_status))
+    payload = ErrorResponse(
+        error=ErrorBody(code=code, message=message, detail=detail, status_code=http_status)
+    )
     return JSONResponse(status_code=http_status, content=payload.model_dump(mode="json"))
 
 
