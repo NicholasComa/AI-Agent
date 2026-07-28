@@ -481,3 +481,107 @@ def test_constructor_validates_required_args() -> None:
         LlmClient(base_url="https://x", model="", api_key="k")
     with pytest.raises(ValueError, match="max_retries"):
         LlmClient(base_url="https://x", model="m", api_key="k", max_retries=-1)
+
+
+# ---------------------------------------------------------------------------
+# 流式（Day 7）
+# ---------------------------------------------------------------------------
+
+
+def _sse_response(events: list[str]) -> Callable[[httpx.Request], httpx.Response]:
+    """构造一个返回 SSE 响应的 mock handler。
+
+    ``events`` 中每个元素会被序列化为 ``data: {json}\\n\\n``；
+    ``__DONE__`` 字符串会被替换为 ``data: [DONE]\\n\\n``（终止哨兵）。
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        chunks: list[str] = []
+        for ev in events:
+            if ev == "__DONE__":
+                chunks.append("data: [DONE]\n\n")
+            elif ev.startswith("RAW:"):
+                # RAW: 行原样塞进响应（用于测试心跳 / 空行）
+                chunks.append(ev[len("RAW:") :] + "\n")
+            else:
+                chunks.append(f"data: {ev}\n\n")
+        body = "".join(chunks).encode("utf-8")
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=body,
+        )
+
+    return handler
+
+
+async def test_chat_stream_aggregates_deltas() -> None:
+    """3 个 chunk → yield 3 次 → 合并为完整文本。"""
+    events = [
+        json.dumps({"choices": [{"delta": {"content": "你"}}]}),
+        json.dumps({"choices": [{"delta": {"content": "好"}}]}),
+        json.dumps({"choices": [{"delta": {"content": "！"}}]}),
+        "__DONE__",
+    ]
+    client = _make_client(_sse_response(events), retry_backoff=0.001)
+    try:
+        chunks: list[str] = []
+        async for delta in client.chat_stream([{"role": "user", "content": "q"}]):
+            chunks.append(delta)
+    finally:
+        await client.aclose()
+
+    assert "".join(chunks) == "你好！"
+
+
+async def test_chat_stream_stops_on_done_sentinel() -> None:
+    """``data: [DONE]`` 后立即停止,后续行（若有）被忽略。"""
+    events = [
+        json.dumps({"choices": [{"delta": {"content": "x"}}]}),
+        "__DONE__",
+        json.dumps({"choices": [{"delta": {"content": "should not appear"}}]}),
+    ]
+    client = _make_client(_sse_response(events))
+    try:
+        chunks: list[str] = []
+        async for delta in client.chat_stream([{"role": "user", "content": "q"}]):
+            chunks.append(delta)
+    finally:
+        await client.aclose()
+
+    assert chunks == ["x"]
+
+
+async def test_chat_stream_bad_event_shape_raises_format_error() -> None:
+    """``choices`` 缺 ``delta`` → LlmResponseFormatError。"""
+    events = [
+        json.dumps({"choices": [{}]}),  # 缺 delta
+    ]
+    client = _make_client(_sse_response(events))
+    try:
+        with pytest.raises(LlmResponseFormatError):
+            async for _ in client.chat_stream([{"role": "user", "content": "q"}]):
+                pass
+    finally:
+        await client.aclose()
+
+
+async def test_chat_stream_skips_heartbeat_lines() -> None:
+    """空行 / ``: heartbeat`` 行被跳过,只 yield 真正的内容 chunk。"""
+    events = [
+        "RAW:",  # 空行
+        "RAW:: keepalive",  # SSE 注释行（心跳）
+        json.dumps({"choices": [{"delta": {"content": "A"}}]}),
+        "RAW:",  # 又一个空行
+        json.dumps({"choices": [{"delta": {"content": "B"}}]}),
+        "__DONE__",
+    ]
+    client = _make_client(_sse_response(events))
+    try:
+        chunks: list[str] = []
+        async for delta in client.chat_stream([{"role": "user", "content": "q"}]):
+            chunks.append(delta)
+    finally:
+        await client.aclose()
+
+    assert chunks == ["A", "B"]
