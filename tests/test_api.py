@@ -534,3 +534,171 @@ async def test_create_app_default_factory_works() -> None:
     assert "/health" in paths
     assert "/chat" in paths
     assert "/analyze-requirement" in paths
+    assert "/models" in paths
+
+
+# ---------------------------------------------------------------------------
+# Day 8 扩展：/models、/health 新字段、/analyze-requirement request_id
+# ---------------------------------------------------------------------------
+
+
+async def test_health_includes_provider_and_request_id(
+    client: httpx.AsyncClient,
+) -> None:
+    """``/health`` 顶层携带 ``provider``、``max_concurrency``、``request_id``。
+
+    ``provider`` / ``max_concurrency`` 与 ``model.provider`` /
+    ``model.max_concurrency`` 同源（顶层快查 + 嵌套一致）。
+    ``request_id`` 与响应头 ``X-Request-ID`` 同源。
+    """
+    resp = await client.get("/health")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["provider"] == "openai_compatible"
+    assert body["max_concurrency"] == 8  # AppConfig 默认值
+    assert body["model"]["provider"] == body["provider"]
+    assert body["model"]["max_concurrency"] == body["max_concurrency"]
+    # request_id 与响应头一致
+    assert body["request_id"] == resp.headers["X-Request-ID"]
+    assert isinstance(body["request_id"], str) and body["request_id"]
+
+
+async def test_models_returns_current_only_when_no_extras(
+    client: httpx.AsyncClient,
+) -> None:
+    """``/models`` 无 extras 时返回 1 条,``current`` 指回默认模型。"""
+    resp = await client.get("/models")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["current"] == "fake-model"
+    assert len(body["models"]) == 1
+    assert body["models"][0]["name"] == "fake-model"
+    assert body["models"][0]["provider"] == "openai_compatible"
+    assert body["models"][0]["key_configured"] is True
+    # request_id 同源
+    assert body["request_id"] == resp.headers["X-Request-ID"]
+
+
+async def test_models_includes_extras(
+    fake_llm: _FakeLlm,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``extra_models`` 出现在 ``/models`` 列表中(按配置顺序)。"""
+    monkeypatch.setenv("API_KEY", "test-key")
+    cfg = AppConfig(
+        model_name="primary",
+        api_base_url="http://fake/v1",
+        timeout_seconds=1.0,
+        enable_stream=False,
+        extra_models=["backup-mini", "backup-large"],
+    )
+    app = create_app(llm_factory=lambda: fake_llm, config_loader=lambda: cfg)
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://test",
+        ) as ac,
+    ):
+        resp = await ac.get("/models")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["current"] == "primary"
+    names = [m["name"] for m in body["models"]]
+    assert names == ["primary", "backup-mini", "backup-large"]
+    # base_url 与 provider 一致(本期:extras 复用主 base_url)
+    for m in body["models"]:
+        assert m["base_url"] == "http://fake/v1"
+        assert m["provider"] == "openai_compatible"
+        assert m["key_configured"] is True
+
+
+async def test_models_redacts_no_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``/models`` 永不返回 API key,key 缺失时 ``key_configured=False``。"""
+    from llm_client import LlmClient
+
+    class _NullLlm(LlmClient):  # type: ignore[misc]
+        def __init__(self) -> None:
+            # 不调 super,纯占位
+            self._closed = False
+
+        async def chat(self, *args: object, **kwargs: object) -> LlmResult:  # pragma: no cover
+            raise NotImplementedError
+
+        async def chat_stream(self, *args: object, **kwargs: object):  # pragma: no cover
+            raise NotImplementedError
+            yield ""  # 让 async generator 类型满足
+
+        async def aclose(self) -> None:
+            self._closed = True
+
+    monkeypatch.delenv("API_KEY", raising=False)
+    cfg = AppConfig(
+        model_name="m",
+        api_base_url="http://fake/v1",
+        timeout_seconds=1.0,
+        enable_stream=False,
+    )
+    null_llm = _NullLlm()
+    app = create_app(llm_factory=lambda: null_llm, config_loader=lambda: cfg)
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://test",
+        ) as ac,
+    ):
+        resp = await ac.get("/models")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    # 响应里任何字段都不包含 API_KEY 字面或 None 之外的 key-like 字符串
+    assert body["models"][0]["key_configured"] is False
+    raw = resp.text
+    # 没有 "API_KEY=..." 或 "Bearer xxx" 这种泄漏
+    assert "API_KEY" not in raw or "key_configured" in raw  # 只允许字段名出现
+    assert "Bearer" not in raw
+
+
+async def test_analyze_requirement_response_carries_request_id(
+    client: httpx.AsyncClient, fake_llm: _FakeLlm
+) -> None:
+    """``/analyze-requirement`` 响应里也携带 ``request_id``(与响应头同源)。
+
+    注意:``AnalyzeRequirementResponse`` 是从 ``RequirementAnalysis`` 继承,
+    然后手动 ``parsed.request_id = rid``。验证这条路径通了。
+    """
+    # fake 默认 responder 返回 text 字段值,但 analyze-requirement 需要 JSON 文本。
+    # 我们让 responder 直接给一个合法 RequirementAnalysis JSON。
+    from schemas import RequirementAnalysis
+
+    fake = RequirementAnalysis(
+        title="做电商",
+        category="web",
+        functional_points=["要点1", "要点2", "要点3", "要点4", "要点5"],
+        risks=["风险1", "风险2", "风险3"],
+        clarification_questions=["问题1", "问题2"],
+        confidence=0.9,
+    )
+
+    def responder(messages, *, model=None, extra_body=None):
+        return LlmResult(
+            text=fake.model_dump_json(),
+            model="fake-model",
+            elapsed_ms=1,
+            usage={"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        )
+
+    fake_llm.set_responder(responder)
+    incoming = "trace-analyze-001"
+    resp = await client.post(
+        "/analyze-requirement",
+        json={"text": "做点什么"},
+        headers={"X-Request-ID": incoming},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["title"] == "做电商"
+    assert body["request_id"] == incoming
+    assert resp.headers["X-Request-ID"] == incoming

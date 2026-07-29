@@ -1,4 +1,4 @@
-"""Day 5 - HTTP 接口的请求 / 响应 / 错误 Pydantic 模型。
+"""Day 5-9 - HTTP 接口的请求 / 响应 / 错误 Pydantic 模型。
 
 为什么单独拆一个模块（而不是复用 :mod:`src.schemas`）？
 
@@ -20,6 +20,8 @@
   却没更新测试，会立刻报错而非静默通过。
 * 错误信封统一使用 :class:`ErrorResponse` -> :class:`ErrorBody`，
   客户端就能统一解析 ``response.json()["error"]["code"]``。
+* 响应里可选地携带 ``request_id`` —— 与响应头 ``X-Request-ID`` 同源，
+  客户端可以任选其一做关联（Day 8 起）。
 """
 
 from __future__ import annotations
@@ -94,6 +96,7 @@ class ChatResponse(BaseModel):
         model: 服务端回显的实际模型名（当网关发生回退时可能与请求中不同）。
         elapsed_ms: 底层调用的墙上时钟耗时。
         usage: 服务端返回的可选 token 用量字典。
+        request_id: 服务端 request_id（与响应头 ``X-Request-ID`` 同源）。
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -102,6 +105,29 @@ class ChatResponse(BaseModel):
     model: str = Field(..., description="实际使用的模型名（可能与请求不同）")
     elapsed_ms: int = Field(..., ge=0, description="底层调用耗时，毫秒")
     usage: dict[str, int] | None = Field(default=None, description="可选 token 用量")
+    request_id: str | None = Field(
+        default=None,
+        description="服务端 request_id（与响应头 X-Request-ID 同源）",
+    )
+
+
+# ---------------------------------------------------------------------------
+# 流式接口：POST /chat/stream  ——  Day 9 落地，契约先在这里定义
+# ---------------------------------------------------------------------------
+
+
+class ChatChunk(BaseModel):
+    """``POST /chat/stream`` 的单片响应（SSE ``data: {...}`` 解析后形态）。
+
+    Attributes:
+        delta: 本片增量文本（OpenAI 兼容 ``choices[0].delta.content``）。
+        done: 是否为终止哨兵（对应 SSE ``data: [DONE]``）。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    delta: str = Field(..., description="增量文本")
+    done: bool = Field(default=False, description="是否为终止哨兵")
 
 
 # ---------------------------------------------------------------------------
@@ -133,9 +159,16 @@ class AnalyzeRequirementResponse(RequirementAnalysis):
     复用 :class:`src.schemas.RequirementAnalysis` 的全部六个字段
     （即 LLM 契约）。保留这个别名意味着测试可以直接用 LLM schema 校验
     响应，而无需重新声明一遍。
+
+    Day 8 起额外携带 ``request_id``，方便客户端关联日志。
     """
 
     model_config = ConfigDict(extra="forbid")
+
+    request_id: str | None = Field(
+        default=None,
+        description="服务端 request_id（与响应头 X-Request-ID 同源）",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -157,6 +190,8 @@ class HealthModelInfo(BaseModel):
     timeout_seconds: float = Field(..., gt=0, description="单次请求超时（秒）")
     enable_stream: bool = Field(..., description="是否启用流式")
     key_configured: bool = Field(..., description="API_KEY 是否已配置（非空）")
+    provider: str = Field(..., description="provider 名称（openai_compatible / ollama）")
+    max_concurrency: int = Field(..., gt=0, description="上游并发上限")
 
 
 class HealthResponse(BaseModel):
@@ -168,6 +203,9 @@ class HealthResponse(BaseModel):
             会返回 401）。
         version: 包版本号（取自 ``pyproject.toml``）。
         model: 模型配置摘要。
+        provider: provider 名称（顶层快查字段，与 ``model.provider`` 同值）。
+        max_concurrency: 上游并发上限（顶层快查字段）。
+        request_id: 服务端 request_id（与响应头 ``X-Request-ID`` 同源）。
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -175,6 +213,55 @@ class HealthResponse(BaseModel):
     status: Literal["ok", "degraded"] = Field(..., description="总体健康状态")
     version: str = Field(..., description="应用版本（来自 pyproject.toml）")
     model: HealthModelInfo = Field(..., description="模型配置摘要")
+    provider: str = Field(..., description="provider 名称（顶层快查）")
+    max_concurrency: int = Field(..., gt=0, description="上游并发上限（顶层快查）")
+    request_id: str | None = Field(
+        default=None,
+        description="服务端 request_id（与响应头 X-Request-ID 同源）",
+    )
+
+
+# ---------------------------------------------------------------------------
+# 模型清单：GET /models   ——   Day 8 新增
+# ---------------------------------------------------------------------------
+
+
+class ModelInfo(BaseModel):
+    """单模型元信息（``GET /models`` 列表中的元素）。
+
+    Attributes:
+        name: 模型名称。
+        base_url: 模型服务 base URL（不含尾部斜杠）。
+        provider: provider 名称。
+        key_configured: API key 是否已配置（布尔；绝不暴露 key 本身）。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(..., description="模型名称")
+    base_url: str = Field(..., description="模型服务 base URL")
+    provider: str = Field(..., description="provider 名称")
+    key_configured: bool = Field(..., description="API key 是否已配置")
+
+
+class ModelsResponse(BaseModel):
+    """``GET /models`` 返回的响应体。
+
+    Attributes:
+        models: 可用模型列表。第一个是当前默认（与 ``current`` 同名），
+            其余来自 :attr:`config.AppConfig.extra_models`。
+        current: 当前默认模型名。
+        request_id: 服务端 request_id。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    models: list[ModelInfo] = Field(..., description="可用模型列表（当前 + 兜底）")
+    current: str = Field(..., description="当前默认模型名")
+    request_id: str | None = Field(
+        default=None,
+        description="服务端 request_id（与响应头 X-Request-ID 同源）",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -191,7 +278,7 @@ class ErrorBody(BaseModel):
         message: 人类可读的一行描述。可以安全地暴露给客户端 -
             绝不包含 API key 或请求体。
         detail: 可选的结构化细节（例如底层异常的类名），用于调试。
-        status_code: HTTP 状态码。##个人补充
+        status_code: HTTP 状态码。
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -223,15 +310,19 @@ class ErrorResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def error_body(code: str, message: str, detail: str | None = None) -> dict[str, Any]:
+def error_body(
+    code: str, message: str, detail: str, http_status: int | None = None
+) -> dict[str, Any]:
     """构造一个 :class:`ErrorResponse` 形状的字典，供各 handler 使用。
 
     Args:
         code: 机器可读的标识（例如 ``"llm_timeout"``）。
         message: 人类可读的一行描述。
-        detail: 可选的调试细节。
-
+        detail: 可选的结构化细节。
+        http_status: HTTP 状态码。若为 ``None``，则不在字典中返回。
     Returns:
-        ``{"error": {"code": ..., "message": ..., "detail": ...}}``
+        ``{"error": {"code": ..., "message": ..., "detail": ..., "status_code": ...}}``
     """
-    return {"error": {"code": code, "message": message, "detail": detail}}
+    return {
+        "error": {"code": code, "message": message, "detail": detail, "status_code": http_status}
+    }
