@@ -106,16 +106,23 @@ async def client(
     fake_config: AppConfig,
     monkeypatch: pytest.MonkeyPatch,
 ) -> AsyncIterator[httpx.AsyncClient]:
-    """构建一个注入了 fake 的 app + 驱动 lifespan 的 httpx 客户端。"""
+    """构建一个注入了 fake 的 app + 驱动 lifespan 的 httpx 客户端。
+
+    Day 9.x 起:``create_app()`` 返回已挂好 RequestId + AccessLog 的
+    完整 FastAPI 实例(均用 ``add_middleware`` 注入,``app`` 仍是 FastAPI
+    实例),与 ``fastapi dev`` / ``main.py`` 入口是同一个应用,无需再在
+    外面额外包裹。lifespan context 直接作用在 FastAPI 实例上。
+    """
     monkeypatch.setenv("API_KEY", "test-key")
-    app = create_app(
+    fastapi_app = create_app(
         llm_factory=lambda: fake_llm,
         config_loader=lambda: fake_config,
     )
+    asgi_app = fastapi_app
     async with (
-        app.router.lifespan_context(app),
+        fastapi_app.router.lifespan_context(fastapi_app),
         httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app),
+            transport=httpx.ASGITransport(app=asgi_app),
             base_url="http://test",
         ) as ac,
     ):
@@ -277,13 +284,13 @@ async def test_request_id_propagates_via_contextvars(
     这个测试临时装一个 spy route 来读 contextvar。
     """
     monkeypatch.setenv("API_KEY", "test-key")
-    app = create_app(
+    fastapi_app = create_app(
         llm_factory=lambda: fake_llm,
         config_loader=lambda: fake_config,
     )
     captured: dict[str, str | None] = {"from_var": None}
 
-    @app.get("/__test_probe")
+    @fastapi_app.get("/__test_probe")
     async def probe() -> dict[str, str | None]:
         from logging_config import request_id_var
 
@@ -291,10 +298,11 @@ async def test_request_id_propagates_via_contextvars(
         return {"rid": captured["from_var"]}
 
     incoming = "ctxvar-trace-abc"
+    asgi_app = fastapi_app
     async with (
-        app.router.lifespan_context(app),
+        fastapi_app.router.lifespan_context(fastapi_app),
         httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app),
+            transport=httpx.ASGITransport(app=asgi_app),
             base_url="http://test",
         ) as ac,
     ):

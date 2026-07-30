@@ -140,6 +140,9 @@ DEFAULT_RETRY_BACKOFF = 0.5
 DEFAULT_TIMEOUT = 30.0
 """每次请求的默认超时（秒）。"""
 
+DEFAULT_MAX_CONCURRENCY = 8
+"""默认上游并发上限。``asyncio.Semaphore`` 持有数。"""
+
 
 def _elapsed_ms(started: float) -> int:
     return int((time.perf_counter() - started) * 1000)
@@ -164,6 +167,9 @@ class LlmClient:
         max_retries: 遇到临时失败时重试的次数。
         retry_backoff: 退避基准秒数；实际延迟为
             ``retry_backoff * 2 ** attempt``。
+        max_concurrency: 上游并发上限。``chat()`` 和 ``chat_stream()`` 内部
+            用 :class:`asyncio.Semaphore` 保护，超过上限的请求会在
+            acquire 处等待。``<= 0`` 抛 ``ValueError``。
         client: 可选注入的 :class:`httpx.AsyncClient`（用于测试）。
     """
 
@@ -177,6 +183,7 @@ class LlmClient:
         timeout_seconds: float = DEFAULT_TIMEOUT,
         max_retries: int = DEFAULT_MAX_RETRIES,
         retry_backoff: float = DEFAULT_RETRY_BACKOFF,
+        max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
         client: httpx.AsyncClient | None = None,
     ) -> None:
         if not base_url:
@@ -187,6 +194,9 @@ class LlmClient:
             raise ValueError(msg)
         if max_retries < 0:
             msg = "max_retries must be >= 0"
+            raise ValueError(msg)
+        if max_concurrency < 1:
+            msg = "max_concurrency must be >= 1"
             raise ValueError(msg)
 
         # API 密钥解析：显式传入优先，否则读环境变量。
@@ -205,6 +215,11 @@ class LlmClient:
         self._retry_backoff = retry_backoff
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(timeout=timeout_seconds)
+
+        # 并发限制：chat() / chat_stream() 每次进入"发起请求"段时 acquire
+        # Semaphore。注意 asyncio.Semaphore 是惰性的，第一次 acquire 时
+        # 才绑定当前 event loop，所以 __init__ 阶段不需要 loop。
+        self._sem = asyncio.Semaphore(max_concurrency)
 
     @property
     def model(self) -> str:
@@ -277,71 +292,74 @@ class LlmClient:
 
         attempt = 0
         while True:
-            started = time.perf_counter()
-            try:
-                response = await self._client.post(url, json=body, headers=headers)
-            except httpx.TimeoutException as exc:
+            # 每次进入"发起请求"前都重新 acquire —— 锁在 backoff 期间
+            # 释放给其它调用方，从而体现"同时 in-flight ≤ N"的语义。
+            async with self._sem:
+                started = time.perf_counter()
+                try:
+                    response = await self._client.post(url, json=body, headers=headers)
+                except httpx.TimeoutException as exc:
+                    elapsed_ms = _elapsed_ms(started)
+                    # 该消息里绝不带入 URL/密钥；光看 body 本身已足够诊断。
+                    logger.warning(
+                        "llm timeout attempt=%d elapsed_ms=%d err=%s",
+                        attempt + 1,
+                        elapsed_ms,
+                        exc,
+                    )
+                    if attempt < self._max_retries:
+                        await self._sleep_backoff(attempt)
+                        attempt += 1
+                        continue
+                    msg = f"request timed out after {attempt + 1} attempts"
+                    raise LlmTimeoutError(msg) from exc
+                except httpx.ConnectError as exc:
+                    elapsed_ms = _elapsed_ms(started)
+                    logger.warning(
+                        "llm connect error attempt=%d elapsed_ms=%d err=%s",
+                        attempt + 1,
+                        elapsed_ms,
+                        exc,
+                    )
+                    if attempt < self._max_retries:
+                        await self._sleep_backoff(attempt)
+                        attempt += 1
+                        continue
+                    msg = f"connection failed after {attempt + 1} attempts"
+                    raise LlmTimeoutError(msg) from exc
+
                 elapsed_ms = _elapsed_ms(started)
-                # 该消息里绝不带入 URL/密钥；光看 body 本身已足够诊断。
+                status = response.status_code
+
+                if status == 200:
+                    return self._parse_response(response, elapsed_ms, used_model)
+
+                # 非 200 分支：记录状态码和简短的 body，但绝不记录请求头
+                # （这样密钥就绝不会通过日志泄漏）。
+                body_snippet = self._redact((response.text or "")[:200])
                 logger.warning(
-                    "llm timeout attempt=%d elapsed_ms=%d err=%s",
+                    "llm http=%d attempt=%d elapsed_ms=%d body=%s",
+                    status,
                     attempt + 1,
                     elapsed_ms,
-                    exc,
+                    body_snippet,
                 )
-                if attempt < self._max_retries:
+
+                if status in (401, 403):
+                    raise LlmAuthError(f"authentication failed ({status}): {body_snippet}")
+
+                if status in RETRYABLE_STATUS and attempt < self._max_retries:
                     await self._sleep_backoff(attempt)
                     attempt += 1
                     continue
-                msg = f"request timed out after {attempt + 1} attempts"
-                raise LlmTimeoutError(msg) from exc
-            except httpx.ConnectError as exc:
-                elapsed_ms = _elapsed_ms(started)
-                logger.warning(
-                    "llm connect error attempt=%d elapsed_ms=%d err=%s",
-                    attempt + 1,
-                    elapsed_ms,
-                    exc,
-                )
-                if attempt < self._max_retries:
-                    await self._sleep_backoff(attempt)
-                    attempt += 1
-                    continue
-                msg = f"connection failed after {attempt + 1} attempts"
-                raise LlmTimeoutError(msg) from exc
 
-            elapsed_ms = _elapsed_ms(started)
-            status = response.status_code
+                if status == 429:
+                    raise LlmRateLimitError(f"rate limited: {body_snippet}")
+                if 500 <= status < 600:
+                    raise LlmServerError(f"server error {status}: {body_snippet}")
 
-            if status == 200:
-                return self._parse_response(response, elapsed_ms, used_model)
-
-            # 非 200 分支：记录状态码和简短的 body，但绝不记录请求头
-            # （这样密钥就绝不会通过日志泄漏）。
-            body_snippet = self._redact((response.text or "")[:200])
-            logger.warning(
-                "llm http=%d attempt=%d elapsed_ms=%d body=%s",
-                status,
-                attempt + 1,
-                elapsed_ms,
-                body_snippet,
-            )
-
-            if status in (401, 403):
-                raise LlmAuthError(f"authentication failed ({status}): {body_snippet}")
-
-            if status in RETRYABLE_STATUS and attempt < self._max_retries:
-                await self._sleep_backoff(attempt)
-                attempt += 1
-                continue
-
-            if status == 429:
-                raise LlmRateLimitError(f"rate limited: {body_snippet}")
-            if 500 <= status < 600:
-                raise LlmServerError(f"server error {status}: {body_snippet}")
-
-            # 其它 4xx（400、404 等）：客户端错误，不重试。
-            raise LlmError(f"http {status}: {body_snippet}")
+                # 其它 4xx（400、404 等）：客户端错误，不重试。
+                raise LlmError(f"http {status}: {body_snippet}")
 
     async def chat_stream(
         self,
@@ -404,104 +422,110 @@ class LlmClient:
 
         attempt = 0
         while True:
-            started = time.perf_counter()
-            try:
-                async with self._client.stream(
-                    "POST",
-                    url,
-                    json=body,
-                    headers=headers,
-                ) as response:
+            # 与 chat() 同：每次发起请求前重新 acquire。
+            async with self._sem:
+                started = time.perf_counter()
+                try:
+                    async with self._client.stream(
+                        "POST",
+                        url,
+                        json=body,
+                        headers=headers,
+                    ) as response:
+                        elapsed_ms = _elapsed_ms(started)
+                        status = response.status_code
+
+                        if status != 200:
+                            # 把错误响应体完整读出来用于日志/异常
+                            await response.aread()
+                            body_snippet = self._redact((response.text or "")[:200])
+                            logger.warning(
+                                "llm stream http=%d attempt=%d elapsed_ms=%d body=%s",
+                                status,
+                                attempt + 1,
+                                elapsed_ms,
+                                body_snippet,
+                            )
+
+                            if status in (401, 403):
+                                raise LlmAuthError(
+                                    f"authentication failed ({status}): {body_snippet}"
+                                )
+
+                            if status in RETRYABLE_STATUS and attempt < self._max_retries:
+                                await self._sleep_backoff(attempt)
+                                attempt += 1
+                                continue
+
+                            if status == 429:
+                                raise LlmRateLimitError(f"rate limited: {body_snippet}")
+                            if 500 <= status < 600:
+                                raise LlmServerError(f"server error {status}: {body_snippet}")
+
+                            raise LlmError(f"http {status}: {body_snippet}")
+
+                        # 200：开始按行解析 SSE
+                        async for line in response.aiter_lines():
+                            # SSE 注释行 / 心跳 / 空行：跳过
+                            if not line or line.startswith(":"):
+                                continue
+                            if not line.startswith("data: "):
+                                continue
+
+                            payload = line[len("data: ") :]
+                            if payload == "[DONE]":
+                                return
+
+                            try:
+                                event = json.loads(payload)
+                            except json.JSONDecodeError as exc:
+                                msg = f"SSE event is not valid JSON: {exc}"
+                                raise LlmResponseFormatError(msg) from exc
+
+                            try:
+                                delta = event["choices"][0]["delta"].get("content", "")
+                            except (KeyError, IndexError, TypeError) as exc:
+                                msg = f"missing 'choices[0].delta.content' in SSE event: {exc}"
+                                raise LlmResponseFormatError(msg) from exc
+
+                            if not isinstance(delta, str):
+                                msg = (
+                                    f"'delta.content' must be a string, got {type(delta).__name__}"
+                                )
+                                raise LlmResponseFormatError(msg)
+
+                            if delta:
+                                yield delta
+
+                        return  # 流正常结束
+                except httpx.TimeoutException as exc:
                     elapsed_ms = _elapsed_ms(started)
-                    status = response.status_code
-
-                    if status != 200:
-                        # 把错误响应体完整读出来用于日志/异常
-                        await response.aread()
-                        body_snippet = self._redact((response.text or "")[:200])
-                        logger.warning(
-                            "llm stream http=%d attempt=%d elapsed_ms=%d body=%s",
-                            status,
-                            attempt + 1,
-                            elapsed_ms,
-                            body_snippet,
-                        )
-
-                        if status in (401, 403):
-                            raise LlmAuthError(f"authentication failed ({status}): {body_snippet}")
-
-                        if status in RETRYABLE_STATUS and attempt < self._max_retries:
-                            await self._sleep_backoff(attempt)
-                            attempt += 1
-                            continue
-
-                        if status == 429:
-                            raise LlmRateLimitError(f"rate limited: {body_snippet}")
-                        if 500 <= status < 600:
-                            raise LlmServerError(f"server error {status}: {body_snippet}")
-
-                        raise LlmError(f"http {status}: {body_snippet}")
-
-                    # 200：开始按行解析 SSE
-                    async for line in response.aiter_lines():
-                        # SSE 注释行 / 心跳 / 空行：跳过
-                        if not line or line.startswith(":"):
-                            continue
-                        if not line.startswith("data: "):
-                            continue
-
-                        payload = line[len("data: ") :]
-                        if payload == "[DONE]":
-                            return
-
-                        try:
-                            event = json.loads(payload)
-                        except json.JSONDecodeError as exc:
-                            msg = f"SSE event is not valid JSON: {exc}"
-                            raise LlmResponseFormatError(msg) from exc
-
-                        try:
-                            delta = event["choices"][0]["delta"].get("content", "")
-                        except (KeyError, IndexError, TypeError) as exc:
-                            msg = f"missing 'choices[0].delta.content' in SSE event: {exc}"
-                            raise LlmResponseFormatError(msg) from exc
-
-                        if not isinstance(delta, str):
-                            msg = f"'delta.content' must be a string, got {type(delta).__name__}"
-                            raise LlmResponseFormatError(msg)
-
-                        if delta:
-                            yield delta
-
-                    return  # 流正常结束
-            except httpx.TimeoutException as exc:
-                elapsed_ms = _elapsed_ms(started)
-                logger.warning(
-                    "llm stream timeout attempt=%d elapsed_ms=%d err=%s",
-                    attempt + 1,
-                    elapsed_ms,
-                    exc,
-                )
-                if attempt < self._max_retries:
-                    await self._sleep_backoff(attempt)
-                    attempt += 1
-                    continue
-                msg = f"stream timed out after {attempt + 1} attempts"
-                raise LlmTimeoutError(msg) from exc
-            except httpx.ConnectError as exc:
-                elapsed_ms = _elapsed_ms(started)
-                logger.warning(
-                    "llm stream connect error attempt=%d elapsed_ms=%d err=%s",
-                    attempt + 1,
-                    elapsed_ms,
-                    exc,
-                )
-                if attempt < self._max_retries:
-                    await self._sleep_backoff(attempt)
-                    attempt += 1
-                    continue
-                msg = f"stream connect failed after {attempt + 1} attempts"
-                raise LlmTimeoutError(msg) from exc
+                    logger.warning(
+                        "llm stream timeout attempt=%d elapsed_ms=%d err=%s",
+                        attempt + 1,
+                        elapsed_ms,
+                        exc,
+                    )
+                    if attempt < self._max_retries:
+                        await self._sleep_backoff(attempt)
+                        attempt += 1
+                        continue
+                    msg = f"stream timed out after {attempt + 1} attempts"
+                    raise LlmTimeoutError(msg) from exc
+                except httpx.ConnectError as exc:
+                    elapsed_ms = _elapsed_ms(started)
+                    logger.warning(
+                        "llm stream connect error attempt=%d elapsed_ms=%d err=%s",
+                        attempt + 1,
+                        elapsed_ms,
+                        exc,
+                    )
+                    if attempt < self._max_retries:
+                        await self._sleep_backoff(attempt)
+                        attempt += 1
+                        continue
+                    msg = f"stream connect failed after {attempt + 1} attempts"
+                    raise LlmTimeoutError(msg) from exc
 
     async def _sleep_backoff(self, attempt: int) -> None:
         delay = self._retry_backoff * (2**attempt)

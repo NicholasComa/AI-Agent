@@ -279,6 +279,8 @@ class ErrorBody(BaseModel):
             绝不包含 API key 或请求体。
         detail: 可选的结构化细节（例如底层异常的类名），用于调试。
         status_code: HTTP 状态码。
+        request_id: 服务端 request_id（与响应头 ``X-Request-ID`` 同源），
+            流式与非流式错误体都携带，便于客户端关联日志。
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -287,6 +289,10 @@ class ErrorBody(BaseModel):
     message: str = Field(..., description="人类可读描述")
     detail: str | None = Field(default=None, description="可选的调试细节")
     status_code: int = Field(..., description="HTTP状态码", ge=100, lt=600)
+    request_id: str | None = Field(
+        default=None,
+        description="服务端 request_id（与响应头 X-Request-ID 同源）",
+    )
 
 
 class ErrorResponse(BaseModel):

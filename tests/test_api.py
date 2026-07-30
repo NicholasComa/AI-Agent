@@ -128,10 +128,18 @@ class _FakeLlm:
 
 
 def _fake_config() -> AppConfig:
-    """测试用的静态 :class:`AppConfig`。"""
+    """测试用的静态 :class:`AppConfig`。
+
+    Day 9 整改起:默认携带 ``api_key="test-key"``，反映"一个正常配置的 app"。
+    旧实现里 ``/health`` 与 ``/models`` 直接读 ``os.environ.get("API_KEY")``，
+    因此测试要靠 ``monkeypatch.setenv`` 才能让 ``key_configured=True``；
+    路由改为读 ``cfg.api_key`` 后，测试也应通过配置对象表达"已配置"。
+    想要"无 key"路径的测试自行构造空 api_key 的 :class:`AppConfig`。
+    """
     return AppConfig(
         model_name="fake-model",
         api_base_url="http://fake/v1",
+        api_key="test-key",
         timeout_seconds=1.0,
         enable_stream=False,
     )
@@ -161,18 +169,23 @@ async def client(
     """构建一个注入了 fake 的全新 app，并产出一个 httpx 客户端。
 
     每个测试都拿到自己的 app，因此 responder 状态不会在测试之间泄漏。
-    ``monkeypatch.setenv`` 默认让 ``/health`` 接口看到一个已配置的 API key；
-    想要 ``degraded`` 的测试自行把它清除。
+    ``fake_config`` 默认带 ``api_key="test-key"``（见 :func:`_fake_config`），
+    ``/health`` 与 ``/models`` 的 ``key_configured`` 直接由它驱动。
+
+    Day 9 起:``create_app()`` 返回已挂好 RequestId + AccessLog 中间件的
+    完整 FastAPI 实例(它们都用 ``add_middleware`` 注入,``app`` 仍是
+    FastAPI 实例,因此 ``fastapi dev`` / ``main.py`` 入口与测试用的是
+    同一个应用);这里直接驱动它的 lifespan 并用 ASGITransport 发请求。
     """
-    monkeypatch.setenv("API_KEY", "test-key")
-    app = create_app(
+    fastapi_app = create_app(
         llm_factory=lambda: fake_llm,
         config_loader=lambda: fake_config,
     )
+    asgi_app = fastapi_app
     async with (
-        app.router.lifespan_context(app),
+        fastapi_app.router.lifespan_context(fastapi_app),
         httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app),
+            transport=httpx.ASGITransport(app=asgi_app),
             base_url="http://test",
         ) as ac,
     ):
@@ -198,16 +211,21 @@ async def test_health_ok(client: httpx.AsyncClient) -> None:
     assert body["model"]["key_configured"] is True
 
 
-async def test_health_degraded_when_no_key(
-    monkeypatch: pytest.MonkeyPatch,
-    fake_llm: _FakeLlm,
-    fake_config: AppConfig,
-) -> None:
-    """当环境变量中的 key 为空时，``/health`` 报告 ``degraded`` 且 ``key_configured=False``。"""
-    monkeypatch.delenv("API_KEY", raising=False)
+async def test_health_degraded_when_no_key(fake_llm: _FakeLlm) -> None:
+    """当 ``cfg.api_key`` 为空时,``/health`` 报告 ``degraded`` 且 ``key_configured=False``。
+
+    Day 9 整改起:不再依赖 ``os.environ``,而是构造一个 ``api_key=""`` 的
+    :class:`AppConfig` 注入 ``config_loader``。
+    """
+    cfg = AppConfig(
+        model_name="fake-model",
+        api_base_url="http://fake/v1",
+        timeout_seconds=1.0,
+        enable_stream=False,
+    )
     app = create_app(
         llm_factory=lambda: fake_llm,
-        config_loader=lambda: fake_config,
+        config_loader=lambda: cfg,
     )
     async with (
         app.router.lifespan_context(app),
@@ -581,13 +599,12 @@ async def test_models_returns_current_only_when_no_extras(
 
 async def test_models_includes_extras(
     fake_llm: _FakeLlm,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """``extra_models`` 出现在 ``/models`` 列表中(按配置顺序)。"""
-    monkeypatch.setenv("API_KEY", "test-key")
     cfg = AppConfig(
         model_name="primary",
         api_base_url="http://fake/v1",
+        api_key="test-key",
         timeout_seconds=1.0,
         enable_stream=False,
         extra_models=["backup-mini", "backup-large"],

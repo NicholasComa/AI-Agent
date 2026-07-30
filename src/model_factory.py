@@ -53,4 +53,5 @@ def build_model_client(settings: AppConfig) -> ModelClient:
         timeout_seconds=settings.timeout_seconds,
         max_retries=settings.max_retries,
         retry_backoff=settings.retry_backoff,
+        max_concurrency=settings.max_concurrency,
     )

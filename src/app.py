@@ -1,4 +1,4 @@
-"""Day 8 - FastAPI 应用工厂与 HTTP 接口。
+"""Day 8-9 - FastAPI 应用工厂与 HTTP 接口。
 
 本模块负责 **HTTP 层**。它只依赖项目内另外几个底层模块：
 
@@ -45,7 +45,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from importlib import metadata
@@ -55,10 +54,12 @@ from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
+from sse_starlette.sse import EventSourceResponse
 
 from api_models import (
     AnalyzeRequirementRequest,
     AnalyzeRequirementResponse,
+    ChatChunk,
     ChatRequest,
     ChatResponse,
     ErrorBody,
@@ -79,7 +80,11 @@ from llm_client import (
     LlmTimeoutError,
 )
 from logging_config import configure_logging
-from middleware import AccessLogMiddleware, RequestIdMiddleware
+from middleware import (
+    AccessLogMiddleware,
+    RequestIdASGIMiddleware,
+)
+from model_factory import build_model_client
 from prompts import build_messages
 
 logger = logging.getLogger(__name__)
@@ -108,16 +113,15 @@ def _default_config_loader() -> AppConfig:
 def _default_llm_factory() -> LlmClient:
     """默认的 :class:`LlmClient` 工厂。
 
-    从环境变量读取 :class:`AppConfig` 并构造客户端，其 API key 取自
-    ``API_KEY``。这里抛出的错误会冒泡到 FastAPI 的启动失败路径 -
-    配置损坏时服务器会拒绝启动。
+    从环境变量读取 :class:`AppConfig` 并经 :func:`build_model_client`
+    构造客户端,其 API key 取自 ``API_KEY``。这里抛出的错误会冒泡到
+    FastAPI 的启动失败路径 - 配置损坏时服务器会拒绝启动。
+
+    Day 9 起,``max_concurrency`` / ``max_retries`` / ``retry_backoff``
+    全部由 :class:`AppConfig` 驱动,符合"切换模型只改配置"通过标准。
     """
     cfg = _default_config_loader()
-    return LlmClient(
-        base_url=cfg.api_base_url,
-        model=cfg.model_name,
-        timeout_seconds=cfg.timeout_seconds,
-    )
+    return build_model_client(cfg)
 
 
 # ---------------------------------------------------------------------------
@@ -184,19 +188,26 @@ def create_app(
         title="llm-gateway-demo",
         version=version,
         description=(
-            "Week 02 模型网关：/health、/models、/chat、/analyze-requirement。"
+            "Week 02 模型网关：/health、/models、/chat、/chat/stream、/analyze-requirement。"
             "基于 Day 3 的 LlmClient、Day 4 的结构化输出 schema、"
             "Day 6 Pydantic Settings、Day 7 ModelClient 协议、"
-            "Day 8 Middleware + JSON 日志 构建。"
+            "Day 8 Middleware + JSON 日志、"
+            "Day 9 流式端点 + 并发限制 构建。"
         ),
         lifespan=lifespan,
     )
 
-    # Middleware 顺序：先 add RequestId（内层），再 add AccessLog（外层计时）。
-    # Starlette "后加先执行"，所以最终请求路径是 AccessLog → RequestId → route。
-    app.add_middleware(RequestIdMiddleware)
+    # Middleware 顺序（Day 9 改造,Day 9.x 修正）:
+    # 两个中间件都用 Starlette ``add_middleware`` 挂在 FastAPI app 上 ——
+    # 它们都是纯 ASGI / 只读 ``http.response.start`` 的包装,**不缓存
+    # body**,因此与 SSE 流式响应兼容;同时 ``app`` 始终是 ``FastAPI``
+    # 实例,``fastapi dev`` / ``fastapi run`` CLI 才能通过
+    # ``isinstance(app, FastAPI)`` 自动发现它（之前在模块级用
+    # ``RequestIdASGIMiddleware(create_app())`` 外部包裹会让 ``app`` 变成
+    # 普通 ASGI callable,CLI 找不到 FastAPI 入口）。
+    # 后 add 的在外层,所以最终请求路径:RequestId → AccessLog → route。
     app.add_middleware(AccessLogMiddleware)
-
+    app.add_middleware(RequestIdASGIMiddleware)
     _register_exception_handlers(app)
     _register_routes(app, config_loader, version)
 
@@ -217,35 +228,47 @@ def _resolve_version() -> str:
 
 
 def _register_exception_handlers(app: FastAPI) -> None:
-    """把每种已知异常类型接到统一的错误信封上。"""
+    """把每种已知异常类型接到统一的错误信封上。
+
+    Day 9 整改：所有 handler 通过 :func:`_map_llm_error` 取 ``(状态码, 错误码)``
+    并经 :func:`_rid` 注入 ``request_id``，保证流式 / 非流式 / 各类 4xx/5xx
+    错误体一致地携带 rid。
+    """
 
     @app.exception_handler(LlmAuthError)
-    async def _auth_handler(_: Request, exc: LlmAuthError) -> JSONResponse:
-        return _json_error(status.HTTP_401_UNAUTHORIZED, "llm_auth", str(exc))
+    async def _auth_handler(request: Request, exc: LlmAuthError) -> JSONResponse:
+        http_status, code = _map_llm_error(exc)
+        return _json_error(http_status, code, str(exc), request_id=_rid(request))
 
     @app.exception_handler(LlmRateLimitError)
-    async def _rate_handler(_: Request, exc: LlmRateLimitError) -> JSONResponse:
-        return _json_error(status.HTTP_429_TOO_MANY_REQUESTS, "llm_rate_limit", str(exc))
+    async def _rate_handler(request: Request, exc: LlmRateLimitError) -> JSONResponse:
+        http_status, code = _map_llm_error(exc)
+        return _json_error(http_status, code, str(exc), request_id=_rid(request))
 
     @app.exception_handler(LlmServerError)
-    async def _server_handler(_: Request, exc: LlmServerError) -> JSONResponse:
-        return _json_error(status.HTTP_502_BAD_GATEWAY, "llm_server", str(exc))
+    async def _server_handler(request: Request, exc: LlmServerError) -> JSONResponse:
+        http_status, code = _map_llm_error(exc)
+        return _json_error(http_status, code, str(exc), request_id=_rid(request))
 
     @app.exception_handler(LlmTimeoutError)
-    async def _timeout_handler(_: Request, exc: LlmTimeoutError) -> JSONResponse:
-        return _json_error(status.HTTP_504_GATEWAY_TIMEOUT, "llm_timeout", str(exc))
+    async def _timeout_handler(request: Request, exc: LlmTimeoutError) -> JSONResponse:
+        http_status, code = _map_llm_error(exc)
+        return _json_error(http_status, code, str(exc), request_id=_rid(request))
 
     @app.exception_handler(LlmResponseFormatError)
-    async def _format_handler(_: Request, exc: LlmResponseFormatError) -> JSONResponse:
-        return _json_error(status.HTTP_502_BAD_GATEWAY, "llm_bad_response", str(exc))
+    async def _format_handler(request: Request, exc: LlmResponseFormatError) -> JSONResponse:
+        http_status, code = _map_llm_error(exc)
+        return _json_error(http_status, code, str(exc), request_id=_rid(request))
 
     @app.exception_handler(LlmError)
-    async def _llm_handler(_: Request, exc: LlmError) -> JSONResponse:
+    async def _llm_handler(request: Request, exc: LlmError) -> JSONResponse:
         # 兜底处理上面未覆盖的 LlmError 子类（例如来自 400/404 的原始 LlmError）。
-        return _json_error(status.HTTP_502_BAD_GATEWAY, "llm_error", str(exc))
+        # 映射走 _map_llm_error，与具体子类 handler 共用同一张表。
+        http_status, code = _map_llm_error(exc)
+        return _json_error(http_status, code, str(exc), request_id=_rid(request))
 
     @app.exception_handler(HTTPException)
-    async def _http_handler(_: Request, exc: HTTPException) -> JSONResponse:
+    async def _http_handler(request: Request, exc: HTTPException) -> JSONResponse:
         # FastAPI 内置的 HTTPException，在接口内部抛出时触发
         # （例如 ``raise HTTPException(403)``）。路由层的 404 / 405
         # 由下面的状态码处理器接管。
@@ -253,23 +276,24 @@ def _register_exception_handlers(app: FastAPI) -> None:
             exc.status_code,
             _code_for_http_status(exc.status_code),
             str(exc.detail) if exc.detail else "",
+            request_id=_rid(request),
         )
 
     # Starlette 的 ExceptionMiddleware 会先匹配状态码处理器，再匹配异常类处理器，
     # 因此路由层抛出的 ``HTTPException(404)`` 会绕过上面的 HTTPException 处理器，
     # 除非我们显式注册一个对应的状态码处理器。
     @app.exception_handler(404)
-    async def _404_handler(_: Request, exc: Exception) -> JSONResponse:
+    async def _404_handler(request: Request, exc: Exception) -> JSONResponse:
         detail = getattr(exc, "detail", "") or "未找到请求的资源"
-        return _json_error(404, "not_found", str(detail))
+        return _json_error(404, "not_found", str(detail), request_id=_rid(request))
 
     @app.exception_handler(405)
-    async def _405_handler(_: Request, exc: Exception) -> JSONResponse:
+    async def _405_handler(request: Request, exc: Exception) -> JSONResponse:
         detail = getattr(exc, "detail", "") or "该 URL 不支持此请求方法"
-        return _json_error(405, "method_not_allowed", str(detail))
+        return _json_error(405, "method_not_allowed", str(detail), request_id=_rid(request))
 
     @app.exception_handler(RequestValidationError)
-    async def _validation_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
+    async def _validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
         # 422 - 改写成 ErrorResponse。我们保留 ``detail`` 中的结构化错误，
         # 方便测试按字段名做断言。
         return _json_error(
@@ -277,10 +301,11 @@ def _register_exception_handlers(app: FastAPI) -> None:
             "validation_error",
             "请求体校验失败",
             detail=json.dumps(exc.errors(), ensure_ascii=False),
+            request_id=_rid(request),
         )
 
     @app.exception_handler(ValidationError)
-    async def _pydantic_handler(_: Request, exc: ValidationError) -> JSONResponse:
+    async def _pydantic_handler(request: Request, exc: ValidationError) -> JSONResponse:
         # 我们自己代码里抛出的 Pydantic ValidationError（例如当 LLM 返回的
         # JSON 无法解析成 RequirementAnalysis 时）。
         return _json_error(
@@ -288,16 +313,22 @@ def _register_exception_handlers(app: FastAPI) -> None:
             "llm_bad_response",
             "模型输出不符合 schema",
             detail=json.dumps(exc.errors(include_url=False), ensure_ascii=False),
+            request_id=_rid(request),
         )
 
     @app.exception_handler(ValueError)
-    async def _value_handler(_: Request, exc: ValueError) -> JSONResponse:
+    async def _value_handler(request: Request, exc: ValueError) -> JSONResponse:
         # Pydantic 之外抛出的编程 / 客户端输入 ValueError（例如漏网的空消息列表）。
         # 按 400 处理。
-        return _json_error(status.HTTP_400_BAD_REQUEST, "bad_request", str(exc))
+        return _json_error(
+            status.HTTP_400_BAD_REQUEST,
+            "bad_request",
+            str(exc),
+            request_id=_rid(request),
+        )
 
     @app.exception_handler(Exception)
-    async def _fallback_handler(_: Request, exc: Exception) -> JSONResponse:
+    async def _fallback_handler(request: Request, exc: Exception) -> JSONResponse:
         # 最后一道兜底处理器，确保客户端永远看到错误信封。
         logger.exception("API 处理器中未捕获的异常：%s", exc)
         return _json_error(
@@ -305,7 +336,37 @@ def _register_exception_handlers(app: FastAPI) -> None:
             "internal_error",
             "发生未知错误",
             detail=type(exc).__name__,
+            request_id=_rid(request),
         )
+
+
+def _rid(request: Request) -> str | None:
+    """从 :class:`Request` 上取出注入的 ``request_id``，缺失时返回 ``None``。
+
+    异常处理器在收到 ``Request`` 时统一用本函数取 rid，避免散落的
+    ``getattr(request.state, "request_id", None)``。
+    """
+    return getattr(request.state, "request_id", None)
+
+
+def _map_llm_error(exc: LlmError) -> tuple[int, str]:
+    """把 :class:`LlmError` 子类映射为 ``(HTTP 状态码, 错误码)``。
+
+    流式与非流式错误路径共用同一张表，避免错误码粒度漂移（例如流式中途
+    鉴权失败拿到 ``401/llm_auth``，而非统一退化成 ``502/llm_stream_error``）。
+    兜底 ``(502, "llm_error")`` 用于未覆盖的基类 :class:`LlmError`。
+    """
+    if isinstance(exc, LlmAuthError):
+        return status.HTTP_401_UNAUTHORIZED, "llm_auth"
+    if isinstance(exc, LlmRateLimitError):
+        return status.HTTP_429_TOO_MANY_REQUESTS, "llm_rate_limit"
+    if isinstance(exc, LlmTimeoutError):
+        return status.HTTP_504_GATEWAY_TIMEOUT, "llm_timeout"
+    if isinstance(exc, LlmServerError):
+        return status.HTTP_502_BAD_GATEWAY, "llm_server"
+    if isinstance(exc, LlmResponseFormatError):
+        return status.HTTP_502_BAD_GATEWAY, "llm_bad_response"
+    return status.HTTP_502_BAD_GATEWAY, "llm_error"
 
 
 def _json_error(
@@ -314,10 +375,22 @@ def _json_error(
     message: str,
     *,
     detail: str | None = None,
+    request_id: str | None = None,
 ) -> JSONResponse:
-    """构造一个带标准错误信封的 :class:`JSONResponse`。"""
+    """构造一个带标准错误信封的 :class:`JSONResponse`。
+
+    Args:
+        request_id: 由 :func:`_rid` 取得。传入后会写入 :class:`ErrorBody`，
+            与响应头 ``X-Request-ID`` 同源，便于客户端关联日志。
+    """
     payload = ErrorResponse(
-        error=ErrorBody(code=code, message=message, detail=detail, status_code=http_status)
+        error=ErrorBody(
+            code=code,
+            message=message,
+            detail=detail,
+            status_code=http_status,
+            request_id=request_id,
+        )
     )
     return JSONResponse(status_code=http_status, content=payload.model_dump(mode="json"))
 
@@ -362,7 +435,7 @@ def _register_routes(
         Day 8 起额外携带 ``provider`` / ``max_concurrency`` / ``request_id``。
         """
         cfg = config_loader()
-        key = os.environ.get("API_KEY", "")
+        key = cfg.api_key
         rid = getattr(request.state, "request_id", None)
         return HealthResponse(
             status="ok" if key else "degraded",
@@ -390,7 +463,7 @@ def _register_routes(
         API key 本身）。当上游不可用时，客户端可以按此列表回退。
         """
         cfg = config_loader()
-        key = os.environ.get("API_KEY", "")
+        key = cfg.api_key
         rid = getattr(request.state, "request_id", None)
         items = [
             ModelInfo(
@@ -444,6 +517,82 @@ def _register_routes(
             request_id=rid,
         )
 
+    @app.post("/chat/stream")
+    async def chat_stream(req: ChatRequest, request: Request) -> EventSourceResponse:
+        """流式对话补全代理（SSE 协议）。
+
+        请求体：:class:`ChatRequest`（与 ``/chat`` 相同）。
+        响应：``text/event-stream``。每条消息格式::
+
+            event: chunk
+            data: {"delta": "你", "done": false}
+
+            event: chunk
+            data: {"delta": "好", "done": false}
+
+            event: chunk
+            data: {"delta": "", "done": true}
+
+        **错误传播**:当底层 LLM 抛 :class:`LlmError` 时,改为先发一条
+        ``event: error`` + ``data: ErrorResponse JSON``,**再**发终止
+        chunk ``done=true``,然后关闭流。这样客户端能拿到结构化的错误
+        信息,而不是收到一个截断的连接。
+
+        **取消传播**:客户端断开时 ``sse-starlette`` 会在 generator
+        里抛 :class:`asyncio.CancelledError`;我们**不**捕获它,而是让它
+        自然传播 —— 端点 handler 协程被取消时,``llm.chat_stream()``
+        的 yield 也会被取消,流自然结束。
+        """
+        llm: LlmClient = request.app.state.llm
+        messages: list[dict[str, str]] = [
+            {"role": m.role, "content": m.content} for m in req.messages
+        ]
+        extra_body: dict[str, Any] = {}
+        if req.temperature is not None:
+            extra_body["temperature"] = req.temperature
+        if req.max_tokens is not None:
+            extra_body["max_tokens"] = req.max_tokens
+
+        rid = getattr(request.state, "request_id", None)
+
+        async def _gen() -> AsyncIterator[dict[str, str]]:
+            try:
+                async for delta in llm.chat_stream(
+                    messages,
+                    model=req.model,
+                    extra_body=extra_body or None,
+                ):
+                    yield {
+                        "event": "chunk",
+                        "data": ChatChunk(delta=delta, done=False).model_dump_json(),
+                    }
+            except LlmError as exc:
+                # 结构化错误:用 ErrorResponse 信封,与普通端点的错误格式一致。
+                # 错误码 / 状态码走 _map_llm_error,与非流式路径共用同一张映射
+                # (例如 LlmAuthError → 401/llm_auth, LlmTimeoutError → 504/llm_timeout)。
+                # rid 同步写入 ErrorBody,与响应头 X-Request-ID 同源。
+                http_status, code = _map_llm_error(exc)
+                payload = ErrorResponse(
+                    error=ErrorBody(
+                        code=code,
+                        message=str(exc),
+                        status_code=http_status,
+                        request_id=rid,
+                    )
+                )
+                yield {
+                    "event": "error",
+                    "data": payload.model_dump_json(),
+                }
+            finally:
+                # 终止哨兵,无论正常 / 异常 / 取消都发(让客户端能干净退出循环)
+                yield {
+                    "event": "chunk",
+                    "data": ChatChunk(delta="", done=True).model_dump_json(),
+                }
+
+        return EventSourceResponse(_gen())
+
     @app.post("/analyze-requirement", response_model=AnalyzeRequirementResponse)
     async def analyze_requirement(
         req: AnalyzeRequirementRequest,
@@ -477,14 +626,20 @@ def _register_routes(
 
 
 # ---------------------------------------------------------------------------
-# 供 ``fastapi dev src/app.py`` 使用的惰性 app 实例
+# 供 ``fastapi dev src/main.py`` 使用的惰性 app 实例
 # ---------------------------------------------------------------------------
 
 # ``fastapi dev`` 与 ``fastapi run`` 会导入本模块并寻找名为 ``app`` 的属性。
-# 我们在此暴露一个用默认工厂构建的模块级 ``app``，这样 Day 5 规范里的命令
-# （``uv run fastapi dev src/main.py``）无论通过本文件还是通过专门的
-# ``src/main.py`` 入口都能工作 - 二者结果一致，因为后者也是自行调用
-# ``create_app()``。
+# 我们在此暴露一个**已用 RequestIdASGIMiddleware 包裹的**模块级 ``app``，
+# 这样 Day 5 规范里的命令（``uv run fastapi dev src/main.py``）无论通过
+# 本文件还是通过专门的 ``src/main.py`` 入口都能工作 - 二者结果一致，因为
+# 后者也是 import 这个 ``app``。
+#
+# 模块级入口：``create_app()`` 已通过 ``add_middleware`` 把 RequestId +
+# AccessLog 挂好，返回的**仍是 ``FastAPI`` 实例** —— 这样既保证
+# ``/chat/stream`` 的 SSE 流式不被 body 缓存破坏，又让 ``fastapi dev
+# src/main.py`` 等 CLI 能通过 ``isinstance(app, FastAPI)`` 自动发现它。
+# 测试也可直接调 ``create_app()`` 拿到 FastAPI 实例以驱动 lifespan。
 
 app = create_app()
 
