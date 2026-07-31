@@ -1,8 +1,9 @@
 """Day 4 - real Ollama verification of structured output (5x stability + 5 samples).
 
-Run from the project root::
+Run from the project root (``src/`` is added to ``sys.path`` automatically
+by this script, so no ``PYTHONPATH`` prefix is needed)::
 
-    PYTHONPATH=src uv run python scripts/run_real_ollama.py
+    uv run python scripts/run_real_ollama.py
 
 Requires the local Ollama daemon running with the ``qwen3:latest`` model
 already pulled. Reads ``.env`` for ``API_BASE_URL`` / ``API_KEY`` /
@@ -19,6 +20,14 @@ import json
 import sys
 import time
 from pathlib import Path
+
+# Make the project's ``src/`` importable no matter how this script is launched
+# (``uv run python scripts/...``, plain ``python scripts/...``, or with an
+# explicit ``PYTHONPATH=src``). Without this, ``from config import load_config``
+# fails with ModuleNotFoundError because ``src/`` is not on sys.path.
+_SRC_DIR = Path(__file__).resolve().parent.parent / "src"
+if str(_SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(_SRC_DIR))
 
 from dotenv import load_dotenv
 
