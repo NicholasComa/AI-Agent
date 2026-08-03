@@ -1,4 +1,4 @@
-# Day 1 — Agent Loop 机制 & LangChain v1 接入
+# Day 11 — Agent Loop 机制 & LangChain v1 接入
 
 > 适用项目：南宁软件组 AI Agent 12 周 Roadmap · Week 3 · Day 1
 > 适用仓库：`D:\workspace\py_ai\week01_ai_basics\`
@@ -46,30 +46,30 @@
 - **输入**：用户问「你好」
 - **模型行为**：返回 `AIMessage(content="你好！", tool_calls=[])`
 - **结果**：loop 单步终止；消息列表 = `[HumanMessage, AIMessage]`
-- **Day 1 验证**：`tests/test_agent_loop.py::test_minimal_loop_terminates_with_empty_tools`
+- **Day 11 验证**：`tests/test_agent_loop.py::test_minimal_loop_terminates_with_empty_tools`
 
 ### 场景 B：模型调一次工具，工具返回后模型再给 final answer
 - **输入**：用户问「2+3=?」
 - **模型行为**：返回 `AIMessage(tool_calls=[add(2,3)])` → 工具执行 → 返回 `AIMessage(content="2+3=5")`
 - **结果**：loop 2 步终止；消息列表 = `[Human, AI(tool_call), ToolMessage, AI(final)]`
-- **Day 2 验证**：用 `FakeMessagesListChatModel` 自定义子类（支持 `bind_tools`）完成
+- **Day 12 验证**：用 `FakeMessagesListChatModel` 自定义子类（支持 `bind_tools`）完成
 
 ### 场景 C：工具抛异常被中间件兜底
 - **输入**：用户问「读 `/etc/passwd`」
 - **模型行为**：调 `read_text_file` → 工具抛 `PermissionError` → `SafeToolMiddleware.wrap_tool_call` 捕获 → 回填 `ToolMessage(content="TOOL_ERROR: ...", name="read_text_file")`
 - **结果**：模型重新看到工具失败结果，自行决定下一步（重述错误 / 改用其他工具 / 给最终回答）
 - **通过标准**：不向上抛、不崩溃；模型和工具循环不脱锚
-- **Day 3 验证**：`SafeToolMiddleware` + mock 模拟工具抛异常
+- **Day 13 验证**：`SafeToolMiddleware` + mock 模拟工具抛异常
 
 ### 场景 D：超过 `recursion_limit` 硬上限
 - **输入**：模型反复生成无效 `tool_calls`（例如陷入死循环）
 - **行为**：LangGraph runtime 达 `recursion_limit`（建议 8–12）→ 抛 `GraphRecursionError`
 - **结果**：循环强制终止；外层由 `SafeToolMiddleware` / catch 块兜底成"模型陷入循环"错误
-- **Day 3 验证**：mock 模型连续 N 次返回含 `tool_calls` 的消息，验证 `recursion_limit` 内必终止
+- **Day 13 验证**：mock 模型连续 N 次返回含 `tool_calls` 的消息，验证 `recursion_limit` 内必终止
 
 ---
 
-## 4. Day 1 任务
+## 4. Day 11 任务
 
 | 任务 | 路径 | 状态 |
 |---|---|---|
@@ -110,7 +110,7 @@ uv run python -c "from langchain.agents import create_agent; from langchain.tool
 
 uv pip list | grep -i langchain
 
-# 4. 跑 Day 1 测试
+# 4. 跑 Day 11 测试
 uv run pytest tests/test_agent_loop.py -v
 
 # 5. 跑全量回归（确认旧测试未破）
@@ -126,7 +126,7 @@ uv run pytest -q
 
 ---
 
-## 6. Day 2 目标
+## 6. Day 12 目标
 
 - **目标**：用 `@tool` 实现 `calculator` / `read_text_file` / `check_commit_message` 三个工具；
 - **新增中间工具**：`FakeToolCapableChatModel`（支持 `bind_tools`，让 `FakeMessagesListChatModel` 走通工具调用路径）；

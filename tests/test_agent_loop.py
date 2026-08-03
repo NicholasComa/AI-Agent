@@ -1,4 +1,4 @@
-"""Day 1 — Agent Loop 最小验证。
+"""Day 11 — Agent Loop 最小验证。
 
 目的：保证 LangChain v1 ``create_agent`` 接入成功 + 跑通最小 Agent Loop。
 
@@ -7,7 +7,7 @@
 * 空工具 + 模型直接给 final answer → loop 单步终止。
 * 验证模型调用与 Agent Loop 的关系：模型只调用 1 次，因为没有 ``tool_calls``。
 
-工具调用 / 工具结果回填 / 多步循环 等场景在 Day 2–Day 3 用
+工具调用 / 工具结果回填 / 多步循环 等场景在 Day 12–Day 13 用
 ``FakeMessagesListChatModel`` 自定义子类验证；本测试不替它们做前置。
 """
 
@@ -27,7 +27,7 @@ def test_create_agent_smoke_returns_compiled_agent() -> None:
 
 
 def test_minimal_loop_terminates_with_empty_tools() -> None:
-    """Day 1 验收:空工具 + 模型直接给 final answer → 单步终止。
+    """Day 11 验收:空工具 + 模型直接给 final answer → 单步终止。
 
     返回结构是 ``{"messages": [HumanMessage, AIMessage, ...]}``,
     最后一条必须是无 ``tool_calls`` 的 AIMessage(即 final answer)。
