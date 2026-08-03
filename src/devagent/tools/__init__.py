@@ -3,6 +3,7 @@
 聚合导出,便于::
 
     from devagent.tools import calculator, read_text_file, check_commit_message
+
     agent = create_agent(model=..., tools=[calculator, read_text_file, check_commit_message])
 
 注意:这里 ``import`` 而**不** ``from . import ...``,因为下文需要把
