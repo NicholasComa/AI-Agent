@@ -112,6 +112,12 @@ class AppConfig(BaseSettings):
     log_format: LogFormat = "json"
     extra_models: list[str] = Field(default_factory=list)
 
+    # ----- Week 03 Agent 工具沙箱 -----
+    # TRAIN_DIR：``read_text_file`` 工具唯一允许读取的根目录（路径穿越防护）
+    train_dir: str = "./training_data"
+    # max_file_bytes：单文件读取上限（防止工具单次拉爆模型上下文）
+    max_file_bytes: int = 50_000
+
     # ----- Pydantic Settings 配置 -----
     model_config = SettingsConfigDict(
         env_file=".env",
