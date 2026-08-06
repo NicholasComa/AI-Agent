@@ -24,7 +24,7 @@
 ## 2. 交付物
 
 - `tests/test_atool_calling.py`：20 条 pytest，4 个测试类（`TestCorrectToolSelection` / `TestNoToolNeeded` / `TestInvalidArguments` / `TestToolFailures`）。
-- （可选）用例矩阵文档 `week03_testcases.md` 此前按"先不写"已删除；20 条清单见下表，代码里也一目了然。
+- （可选）用例矩阵文档 `week03_testcases.md` 未随文档附带；20 条清单见下表。
 
 ### 用例清单
 
