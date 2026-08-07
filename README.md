@@ -1,13 +1,13 @@
 # AI Agent 应用开发
 
-> **第 1–2 周 · 工程基线 + 模型服务**
-> 「12 周 AI Agent 应用开发 Roadmap」前两周的落地工程。Week 1 建立可复现的工程环境与最小模型调用服务；Week 2 将其升级为**稳定、可配置、可测试**的 FastAPI 模型服务（5 个端点、流式输出、并发限制、request_id 链路、统一错误映射、JSON 结构化日志）。
+> **第 1–3 周 · 工程基线 + 模型服务 + 单 Agent**
+> 「12 周 AI Agent 应用开发 Roadmap」前三周的落地工程。Week 1 建立可复现的工程环境与最小模型调用服务；Week 2 将其升级为**稳定、可配置、可测试**的 FastAPI 模型服务；Week 3 基于 LangChain v1 实现 DevAssistantAgent（单 Agent + Tool Calling + 中间件兜底）。
 
 ---
 
 ## 1. 项目内容
 
-本仓库是「12 周 AI Agent 应用开发 Roadmap」**第 1–2 周**的落地工程。目标是建立可复现的 Python AI 应用环境、统一的代码质量与测试基线，并交付一个生产可用的模型调用服务，为后续 10 周打好地基。
+本仓库是「12 周 AI Agent 应用开发 Roadmap」**第 1–3 周**的落地工程。目标是建立可复现的 Python AI 应用环境、统一的代码质量与测试基线，并交付一个生产可用的模型调用服务，为后续 10 周打好地基。
 
 **Week 1 · 工程基线（Day 1–5，打地基）**
 
@@ -17,19 +17,19 @@
 - **Day 4 · 结构化输出**：`src/schemas.py`（`RequirementAnalysis` 等输出模型）与 `src/prompts.py`（系统提示 + 消息构造），JSON Mode 做结构化需求分析。
 - **Day 5 · FastAPI 服务**：`src/app.py`（应用工厂 + `/health` `/chat` `/analyze-requirement` 端点 + 统一异常处理）与 `src/main.py`。
 
-**Week 2 · 模型服务（Day 6–9，升级为稳定服务）**
+**Week 2 · 模型服务（Day 6–10，升级为稳定服务）**
 
-- **Day 6 · 配置驱动**：`config.py` 升级为 `pydantic-settings` 从 `.env` 读取，新增 `max_concurrency` 等 8 个配置项；模型客户端支持 `LlmClient` 重试。
-- **Day 7 · 客户端抽象 + 结构化输出联调**：`src/model_client.py`（`ModelClient` Protocol 抽象）+ `src/model_factory.py`（工厂）；`/analyze-requirement` 结构化闭环联调。
-- **Day 8 · 模型清单 + 中间件 + 日志**：新增 `GET /models`；`src/middleware.py`（RequestId + 访问日志）、`src/logging_config.py`（JSON 日志 + `request_id` 链路追踪）；`/health` 扩展。
-- **Day 9 · 流式 + 并发 + 错误统一**：新增 `POST /chat/stream`（SSE）；`asyncio.Semaphore` 并发限制；所有异常经 `_map_llm_error()` 统一映射为 `ErrorBody`（含 `request_id`）。
+将 Week 1 的最小服务升级为**稳定、可配置、可测试**的 FastAPI 模型服务：配置改用 `pydantic-settings` 从 `.env` 读取；新增 `ModelClient` Protocol 抽象与工厂；加入 `RequestId` + 访问日志中间件与 JSON 结构化日志（`request_id` 链路追踪）；新增 `GET /models` 与 `POST /chat/stream`（SSE 流式）；`asyncio.Semaphore` 并发限制；所有异常经统一映射为 `ErrorBody`（含 `request_id`）。最终交付 5 个端点、106 条测试全部通过。
+
+**Week 3 · 单 Agent 与 Tool Calling（Day 11–15，引入 LangChain v1）**
+
+基于 LangChain v1 的 `create_agent` 实现 `DevAssistantAgent`：提供 `calculator`（安全算术）、`read_text_file`（沙箱防穿越）、`check_commit_message`（commit 规范校验）三个工具；用 `AgentMiddleware` 实现 `TraceMiddleware`（三钩子记录 Agent Loop 关键节点）与 `SafeToolMiddleware`（工具异常兜底转 `TOOL_ERROR:`）；`DEFAULT_RECURSION_LIMIT=8` 防无限循环。新增 82 条测试（Agent Loop + 工具 + 中间件 + 20 条端到端用例覆盖 4 类场景），全量 188 passed。Agent 目前仅被 pytest 驱动，未接真实模型与交互界面。
 
 **最终实现**
 
-- 一个 FastAPI 服务，暴露 5 个端点：健康检查、对话转发、流式对话、模型清单、结构化需求分析；
-- 统一的错误信封（`ErrorBody`：`code` + `message` + `detail` + `status_code` + `request_id`），不向客户端泄露密钥与内部细节；
-- 完整的 `request_id` 链路：从请求注入，贯穿所有日志（含第三方 httpx）与响应体/响应头；
-- 完整的测试验证：截至 Week 2，`ruff` 通过、`pytest` **106 条全部通过**，远超 Roadmap「≥15 测试」要求。
+- Week 1–2：一个 FastAPI 服务，暴露 5 个端点（健康检查、对话转发、流式对话、模型清单、结构化需求分析）；统一的错误信封（`ErrorBody`）；完整的 `request_id` 链路。
+- Week 3：`DevAssistantAgent`（`src/devagent/`）—— 单 Agent + 3 工具 + 2 中间件（追踪 + 兜底）+ 82 条测试；Agent Loop 四个终止条件（直接 final / 调工具→结果→final / 异常兜底 / recursion_limit 截断）。
+- 完整的测试验证：截至 Week 3，`ruff` 通过、`pytest` **188 条全部通过**。
 
 ---
 
@@ -45,7 +45,7 @@ week01_ai_basics/
 ├── .gitignore               # Git 忽略规则
 ├── .python-version          # 锁定 Python 3.12（入库）
 ├── main.py                  # uv init 生成的最小 demo 入口（保留作 hello 示例）
-├── src/                     # 业务代码（扁平包，Week 3 起将收进 src/llm_gateway_demo/）
+├── src/                     # 业务代码（扁平包）
 │   ├── hello.py             # Day 1 hello（demo）
 │   ├── config.py            # Day 2/6 配置（pydantic-settings，从 .env 读取）
 │   ├── llm_client.py        # Day 3/6 Ollama 适配器（chat / chat_stream / 重试）
@@ -57,16 +57,31 @@ week01_ai_basics/
 │   ├── middleware.py        # Day 8 RequestId + AccessLog 中间件（纯 ASGI）
 │   ├── logging_config.py    # Day 8 JSON 日志 + request_id 链路
 │   ├── app.py               # Day 5/8/9 FastAPI 应用工厂 + 5 端点 + 异常映射
-│   └── main.py              # Day 5 FastAPI 服务入口（fastapi dev/run 目标）
-├── tests/                   # pytest 测试（8 个文件，106 用例）
-│   ├── test_config.py            # AppConfig 配置加载 / 字段校验 / env 隔离
-│   ├── test_model_client.py      # ModelClient Protocol 抽象与适配器契约
-│   ├── test_llm_client.py        # LlmClient 异步 chat / chat_stream / 错误 / 重试
-│   ├── test_streaming.py         # /chat/stream SSE 逐 chunk 推送
-│   ├── test_concurrency.py       # asyncio.Semaphore 并发限制（MAX_CONCURRENCY）
-│   ├── test_middleware.py        # RequestId / AccessLog 中间件（rid 注入与日志）
-│   ├── test_api.py               # 5 端点集成测试（ASGITransport，覆盖成功/422/401/429/502/504/404）
-│   └── test_structured_output.py # /analyze-requirement 结构化输出契约与校验
+│   ├── main.py              # Day 5 FastAPI 服务入口（fastapi dev/run 目标）
+│   └── devagent/            # Week 3 DevAssistantAgent（单 Agent + Tool Calling）
+│       ├── __init__.py
+│       ├── dev_assistant_agent.py   # 工厂 build_devassistant_agent + SYSTEM_PROMPT
+│       ├── middleware.py            # TraceRecorder / TraceMiddleware / SafeToolMiddleware
+│       └── tools/
+│           ├── __init__.py
+│           ├── calculator.py
+│           ├── read_text_file.py
+│           └── check_commit_message.py
+├── tests/                   # pytest 测试（13 个文件，188 用例）
+│   ├── conftest.py                 # 全局 fixture（预留）
+│   ├── fake_models.py              # Week 3 测试假模型（FakeToolCapableChatModel）
+│   ├── test_config.py              # AppConfig 配置加载 / 字段校验 / env 隔离
+│   ├── test_model_client.py        # ModelClient Protocol 抽象与适配器契约
+│   ├── test_llm_client.py          # LlmClient 异步 chat / chat_stream / 错误 / 重试
+│   ├── test_streaming.py           # /chat/stream SSE 逐 chunk 推送
+│   ├── test_concurrency.py         # asyncio.Semaphore 并发限制（MAX_CONCURRENCY）
+│   ├── test_middleware.py          # RequestId / AccessLog 中间件（rid 注入与日志）
+│   ├── test_api.py                 # 5 端点集成测试（ASGITransport，覆盖成功/422/401/429/502/504/404）
+│   ├── test_structured_output.py   # /analyze-requirement 结构化输出契约与校验
+│   ├── test_agent_loop.py          # Week 3 Agent Loop 四个终止条件
+│   ├── test_devagent_tools.py      # Week 3 三个工具（含边界 / 越权 / 结构化错误）
+│   ├── test_devagent_agent.py      # Week 3 中间件 / 追踪 / 工厂
+│   └── test_atool_calling.py       # Week 3 20 条端到端用例（4 类场景）
 ├── examples/                # 真实 / 样本数据
 │   ├── requirement_samples.json    # 需求分析样本
 │   └── structured_run_real.json    # 真实模型运行输出样本
@@ -80,13 +95,21 @@ week01_ai_basics/
     ├── day02_python_json.md
     ├── day03_http_async.md
     ├── day04_structured_output.md
+    ├── day06_concepts.md
+    ├── day07_concepts.md
+    ├── day08_concepts.md
+    ├── day09_concepts.md
+    ├── day11_agent_loop.md
+    ├── day12_tools.md
+    ├── day13_agent_middleware.md
+    ├── day14_task_summary.md
     ├── week01_summary.md    # 第 1 周五天总结
     ├── week02_summary.md    # 第 2 周阶段总结
+    ├── week03_summary.md    # 第 3 周阶段总结
     └── poho/                # 运行 / 测试截图（不入库）
 ```
 
 > 本项目的核心交付目录为 `src/`、`tests/`、`docs/`；`main.py`（demo 入口）、`config.example.json`、`scripts/`、`examples/`、`logs/` 为辅助文件。`Dockerfile` / `compose.yaml` 计划从第 9 周加入。
-> **目录重构预告**：Week 3 起计划把扁平的 `src/` 收进 `src/llm_gateway_demo/` 包（按关注点分包：api / clients / agents / …），本次重构为一次性动作，不影响服务行为。
 
 ---
 
@@ -103,6 +126,7 @@ week01_ai_basics/
 | 配置加载    | pydantic-settings           | 从 `.env` 读取 `AppConfig`（Week 2 起）|
 | 流式响应    | sse-starlette               | `POST /chat/stream` 的 SSE 推送        |
 | API 服务    | FastAPI[standard] + Uvicorn | 5 端点服务（含 `fastapi` CLI + uvicorn）|
+| Agent 框架    | LangChain v1               | `create_agent` + `@tool` + `AgentMiddleware`（Week 3 起）|
 | 环境变量    | python-dotenv               | 读取 `.env` 中的密钥与配置            |
 
 ---
@@ -124,12 +148,13 @@ week01_ai_basics/
 | sse-starlette   | ≥ 3.4.6     | `uv run python -c "import sse_starlette; print(sse_starlette.__version__)"`               |
 | httpx           | ≥ 0.28.1    | `uv run python -c "import httpx; print(httpx.__version__)"`                               |
 | python-dotenv   | ≥ 1.2.2     | `uv run python -c "import dotenv; print(dotenv.__version__)"`                             |
+| LangChain       | ≥ 1.3.14    | `uv run python -c "import langchain; print(langchain.__version__)"`                        |
 
 > **关于 `fastapi[standard]`（FastAPI 增强版）**：本项目锁定的是 `fastapi[standard]`，**不是**裸 `fastapi`。`[standard]` 额外捆绑了 `uvicorn` 与 `fastapi` 命令行工具（`fastapi dev` / `fastapi run`）。若只装了裸 `fastapi`，运行 `uv run fastapi dev src/main.py` 会报「需要安装 `fastapi[standard]`」的错误；请始终用 `uv add "fastapi[standard]"`，依赖已在 `pyproject.toml` 中声明。
 
 > **不要在系统级 pip 安装依赖**。所有依赖都通过 `uv add` 加入 `pyproject.toml`，并由 `uv.lock` 锁定。
 
-**本地模型服务（可选但推荐）**：`/chat` 等端点默认对接本地 Ollama。需自行安装并拉取模型，例如 `ollama pull qwen3`，并在 `.env` 中设置 `API_BASE_URL=http://localhost:11434/v1`、`MODEL_NAME=qwen3`。
+**本地模型服务（可选但推荐远程模型服务）**：`/chat` 等端点默认对接本地 Ollama。需自行安装并拉取模型，例如 `ollama pull qwen3`，并在 `.env` 中设置 `API_BASE_URL=http://localhost:11434/v1`、`MODEL_NAME=qwen3`。
 
 ---
 
@@ -307,13 +332,13 @@ curl -s -X POST http://127.0.0.1:8000/analyze-requirement \
 ## 7. 测试与质量
 
 ```bash
-# 全部测试（Week 2 共 106 passed）
+# 全部测试（截至 Week 3 共 188 passed）
 uv run pytest -q
 
 # 按模块运行（部分示例）
 uv run pytest -v tests/test_api.py
 uv run pytest -v tests/test_streaming.py
-uv run pytest -v tests/test_concurrency.py
+uv run pytest -v tests/test_atool_calling.py
 
 # 单个用例
 uv run pytest -v tests/test_api.py::test_chat_timeout_returns_504
@@ -326,7 +351,7 @@ uv run ruff format --check .
 curl http://127.0.0.1:8000/health
 ```
 
-**本周完整测试内容（8 个文件 / 106 用例）**
+**测试内容（13 个文件 / 188 用例）**
 
 | 测试文件 | 覆盖主题 | 关键验证点 |
 | --- | --- | --- |
@@ -338,6 +363,10 @@ curl http://127.0.0.1:8000/health
 | `test_middleware.py` | 中间件 | `RequestIdASGIMiddleware` 注入/传播 rid、`AccessLogMiddleware` 结构化日志且不读敏感字段 |
 | `test_api.py` | 5 端点集成 | 用 `httpx.ASGITransport` 在内存跑整个 ASGI 栈，覆盖 `/health` `/chat` `/chat/stream` `/models` `/analyze-requirement` 的成功与 422/401/429/502/504/404 全分支 |
 | `test_structured_output.py` | 结构化输出 | `/analyze-requirement` 返回符合 `RequirementAnalysis` 契约、JSON Mode 闭环 |
+| `test_agent_loop.py` | Agent Loop | 四个终止条件（直接 final / 调工具→结果→final / 异常兜底 / recursion_limit 截断） |
+| `test_devagent_tools.py` | 三个工具 | `calculator` AST 白名单、`read_text_file` 沙箱防穿越、`check_commit_message` 规范校验 |
+| `test_devagent_agent.py` | 中间件 / 工厂 | `TraceRecorder` 事件记录、`TraceMiddleware` 三钩子、`SafeToolMiddleware` 兜底、`build_devassistant_agent` 工厂 |
+| `test_atool_calling.py` | 20 条端到端用例 | 4 类场景：正确选工具 6 / 无需工具 4 / 错误参数 5 / 工具失败 5 |
 
 **测试架构要点**
 
@@ -345,3 +374,4 @@ curl http://127.0.0.1:8000/health
 - 并发 / 流式 / 中间件测试同样依赖注入假客户端，保证离线可跑、无副作用。
 - `pytest-asyncio` 设为 `asyncio_mode="auto"`，异步用例无需显式标记。
 - `pythonpath=["src"]` 已配置，测试内 `from app import create_app` 等扁平的 import 可直接解析。
+- Week 3 Agent 测试用 `FakeToolCapableChatModel`（`tests/fake_models.py`）假模型按预设序列返回 `AIMessage`（含 `tool_calls`），不依赖真实 LLM；工具失败场景用测试内 `@tool` 自定义 `boom_*` 函数 + `create_agent(middleware=[SafeToolMiddleware()])` 直构造验证兜底。
