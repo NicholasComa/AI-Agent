@@ -6,7 +6,7 @@
 * 实现一个**最小可执行**的 Conventional Commits 校验器,覆盖团队模板
   核心约束:
 
-  - 形如 ``<type>(<scope>): <subject>``(type 可选 ``!`` 表 breaking)
+  - 形如 ``<type>(<scope>): <subject>`` 或 ``<type>: <scope>: <subject>``(scope 必填)
   - type 在白名单内:``func / feat / fix / docs / style / conf / perm /
     version / patch / other / refactor / perf / test / chore / build / ci / revert``
   - subject 不为空、整行长度 ≤ 72
@@ -84,28 +84,35 @@ ALLOWED_TYPES: frozenset[str] = frozenset(
 SUBJECT_MAX = 72
 BODY_LINE_MAX = 100
 
-# header: <type>[!]: [scope:] <subject>   （团队风格）
+# header: 仅支持两种团队风格（scope 必填,不允许 breaking 标记）
+#   括号式（推荐,Conventional Commits 标准）：<type>(<scope>): <subject>
+#   冒号式：<type>: <scope>: <subject>
 #  - type 必填且在 ALLOWED_TYPES 内 (下文单独再校验)
-#  - ! 可选,紧跟 type 之后
-#  - ": scope" 可选,scope 内允许字母数字下划线短横线
+#  - scope 必填：(scope) 或 ": scope" 两种写法等价;无 scope 视为非法
+#  - 不支持 "!" breaking 标记,出现即判非法
 #  - 最后 ": " + subject
 _HEADER_RE = re.compile(
-    r"^(?P<type>[A-Za-z]+)(?P<bang>!?)"
-    r"(?::\s*(?P<scope>[A-Za-z0-9_-]+))?"
+    r"^(?P<type>[A-Za-z]+)"
+    r"(?:\((?P<pscope>[A-Za-z0-9_-]+)\)"
+    r"|(?::\s*(?P<cscope>[A-Za-z0-9_-]+)))"
     r":\s(?P<subject>.+)$"
 )
 
 
 def _parse_header(line: str) -> dict[str, Any]:
-    """解析首行 header,失败时所有字段返回 None。"""
+    """解析首行 header,失败时所有字段返回 None。
+
+    兼容括号式与冒号式两种 scope 写法,统一收敛到 ``scope`` 字段。
+    """
     m = _HEADER_RE.match(line)
     if not m:
         return {"type": None, "scope": None, "subject": None, "breaking": None}
+    scope = m.group("pscope") or m.group("cscope")
     return {
         "type": m.group("type").lower(),
-        "scope": m.group("scope"),
+        "scope": scope,
         "subject": m.group("subject").strip(),
-        "breaking": m.group("bang") == "!",
+        "breaking": False,
     }
 
 
@@ -139,7 +146,10 @@ def check_commit_message(message: str) -> dict[str, Any]:
 
     # ----- 校验 -----
     if parsed["type"] is None:
-        errors.append("header does not match `<type>(scope): subject`")
+        errors.append(
+            "header does not match `<type>(<scope>): subject` "
+            "或 `<type>: <scope>: subject`（scope 必填）"
+        )
     else:
         if parsed["type"] not in ALLOWED_TYPES:
             errors.append(

@@ -213,25 +213,29 @@ class TestCheckCommitMessage:
         assert r["parsed"]["subject"] == "add new endpoint"
         assert r["parsed"]["breaking"] is False
 
-    def test_breaking_marker(self) -> None:
-        msg = "feat!: app: drop legacy endpoint"
+    def test_bang_marker_rejected(self) -> None:
+        # 不允许 breaking 标记 !：出现即判非法格式
+        msg = "feat(app)!: drop legacy endpoint"
         r = check_commit_message(msg)
-        assert r["valid"] is True
-        assert r["parsed"]["breaking"] is True
+        assert r["valid"] is False
+        assert any("header" in e for e in r["errors"])
 
-    def test_no_scope_is_ok(self) -> None:
+    def test_no_scope_rejected(self) -> None:
+        # scope 必填：无 scope 的写法（如 fix: typo）视为非法格式
         r = check_commit_message("fix: typo")
-        assert r["valid"] is True
+        assert r["valid"] is False
         assert r["parsed"]["scope"] is None
+        assert any("scope" in e or "header does not match" in e for e in r["errors"])
 
     def test_unknown_type_rejected(self) -> None:
-        r = check_commit_message("wat: hello")
+        # scope 必填，故未知 type 也需带 scope 才能进入 type 校验
+        r = check_commit_message("wat(app): hello")
         assert r["valid"] is False
         assert any("type" in e for e in r["errors"])
 
     def test_header_too_long(self) -> None:
         long_subject = "x" * 80
-        r = check_commit_message(f"feat: {long_subject}")
+        r = check_commit_message(f"feat(app): {long_subject}")
         assert r["valid"] is False
         assert any("max 72" in e for e in r["errors"])
 
@@ -243,7 +247,7 @@ class TestCheckCommitMessage:
         assert any("max 72" in e for e in r["errors"])
 
     def test_body_line_too_long(self) -> None:
-        msg = "feat: short subject\n\n" + "z" * 120
+        msg = "feat(app): short subject\n\n" + "z" * 120
         r = check_commit_message(msg)
         assert r["valid"] is False
         assert any("body line" in e for e in r["errors"])
@@ -254,11 +258,11 @@ class TestCheckCommitMessage:
         assert r["errors"]  # 至少一条错误
 
     def test_empty_subject(self) -> None:
-        r = check_commit_message("feat:   ")
+        r = check_commit_message("feat(app):   ")
         assert r["valid"] is False
 
     def test_with_body_ok(self) -> None:
-        msg = "feat: add X\n\nThis is a body\nwith multiple lines."
+        msg = "feat(app): add X\n\nThis is a body\nwith multiple lines."
         r = check_commit_message(msg)
         assert r["valid"] is True
         assert r["parsed"]["has_body"] is True
