@@ -75,6 +75,8 @@ workflow:
     - data:
         isInIteration: false
         isInLoop: false
+        iteration_id: null
+        loop_id: null
         sourceType: start
         targetType: llm
       id: 1786419657963--1786419847980-target
@@ -88,6 +90,8 @@ workflow:
     - data:
         isInIteration: false
         isInLoop: false
+        iteration_id: null
+        loop_id: null
         sourceType: llm
         targetType: if-else
       id: 1786419847980--1786427170918-target
@@ -101,6 +105,8 @@ workflow:
     - data:
         isInIteration: false
         isInLoop: false
+        iteration_id: null
+        loop_id: null
         sourceType: if-else
         targetType: knowledge-retrieval
       id: 1786427170918-9bbe6bf4-3666-4585-8d74-4fe3137c0abb-1786428348639-target
@@ -114,6 +120,8 @@ workflow:
     - data:
         isInIteration: false
         isInLoop: false
+        iteration_id: null
+        loop_id: null
         sourceType: if-else
         targetType: code
       id: 1786427170918-f17390fc-dfaa-451b-809e-2530297d2f8a-1786428168314-target
@@ -127,6 +135,8 @@ workflow:
     - data:
         isInIteration: false
         isInLoop: false
+        iteration_id: null
+        loop_id: null
         sourceType: if-else
         targetType: llm
       id: 1786427170918-false-1786515004813-target
@@ -140,6 +150,8 @@ workflow:
     - data:
         isInIteration: false
         isInLoop: false
+        iteration_id: null
+        loop_id: null
         sourceType: if-else
         targetType: code
       id: 1786427170918-true-1786427889010-target
@@ -153,6 +165,8 @@ workflow:
     - data:
         isInIteration: false
         isInLoop: false
+        iteration_id: null
+        loop_id: null
         sourceType: code
         targetType: llm
       id: 1786427889010-source-1786514989988-target
@@ -166,6 +180,8 @@ workflow:
     - data:
         isInIteration: false
         isInLoop: false
+        iteration_id: null
+        loop_id: null
         sourceType: code
         targetType: llm
       id: 1786428168314-source-1786514993397-target
@@ -179,6 +195,8 @@ workflow:
     - data:
         isInIteration: false
         isInLoop: false
+        iteration_id: null
+        loop_id: null
         sourceType: knowledge-retrieval
         targetType: llm
       id: 1786428348639-source-1786514999071-target
@@ -192,6 +210,8 @@ workflow:
     - data:
         isInIteration: false
         isInLoop: false
+        iteration_id: null
+        loop_id: null
         sourceType: llm
         targetType: end
       id: 1786514989988-source-1786437014042-target
@@ -204,6 +224,8 @@ workflow:
     - data:
         isInIteration: false
         isInLoop: false
+        iteration_id: null
+        loop_id: null
         sourceType: llm
         targetType: end
       id: 1786514993397-source-1786437014042-target
@@ -216,6 +238,8 @@ workflow:
     - data:
         isInIteration: false
         isInLoop: false
+        iteration_id: null
+        loop_id: null
         sourceType: llm
         targetType: end
       id: 1786514999071-source-1786437014042-target
@@ -228,6 +252,8 @@ workflow:
     - data:
         isInIteration: false
         isInLoop: false
+        iteration_id: null
+        loop_id: null
         sourceType: llm
         targetType: end
       id: 1786515004813-source-1786437014042-target
@@ -274,7 +300,7 @@ workflow:
           completion_params:
             temperature: 0.7
           mode: chat
-          name: deepseek-v4-flash
+          name: deepseek-v4-pro
           provider: langgenius/deepseek/deepseek
         prompt_template:
         - id: 3d519bc3-85d7-49a9-a07f-b14d385cc503
@@ -296,7 +322,6 @@ workflow:
         selected: false
         structured_output:
           schema:
-            additionalProperties: false
             properties:
               expression:
                 type: string
@@ -328,7 +353,7 @@ workflow:
       positionAbsolute:
         x: 203.3994223268046
         y: 282
-      selected: false
+      selected: true
       sourcePosition: right
       targetPosition: left
       type: custom
@@ -462,11 +487,11 @@ workflow:
       id: '1786427889010'
       position:
         x: 789.0814143603229
-        y: 309.4770119497224
+        y: 299.0137987112848
       positionAbsolute:
         x: 789.0814143603229
-        y: 309.4770119497224
-      selected: false
+        y: 299.0137987112848
+      selected: true
       sourcePosition: right
       targetPosition: left
       type: custom
@@ -578,7 +603,7 @@ workflow:
       positionAbsolute:
         x: 789.0814143603229
         y: 430.4169853947838
-      selected: false
+      selected: true
       sourcePosition: right
       targetPosition: left
       type: custom
@@ -636,9 +661,21 @@ workflow:
         prompt_template:
         - id: 0dcd9fbe-ddaf-481f-894e-5a4da90cf642
           role: system
-          text: '你把工具的结构化输出和用户原始问题翻译成自然语言结论，输出必须严格符合结构化 schema，不输出任何额外文字或 Markdown
-            代码块。
+          text: '你把 calculator 工具的结构化输出和用户原始问题翻译成自然语言结论，输出必须严格符合结构化 schema，不输出任何额外文字或
+            Markdown 代码块。
 
+
+
+            字段含义：
+
+            - answer: 给用户的一句话结论（必填，例如"60"、"计算失败：除零"）
+
+            - tool_used: 固定填 "calculator"
+
+            - status: 与 calculator 的 kind 字段同义，取值 "ok" / "empty" / "too_long" / "syntax"
+            / "unsafe_node" / "domain"
+
+            - result: 计算表达式与值的简短文本（如 "(12+8)*3 = 60"）或错误说明
 
             '
         - id: c171d2bd-ec64-479f-b15b-d0ed23b4e3e7
@@ -655,52 +692,19 @@ workflow:
         selected: false
         structured_output:
           schema:
-            additionalProperties: false
             properties:
               answer:
-                additionalProperties: false
-                properties:
-                  description:
-                    type: string
-                  type:
-                    type: string
-                required:
-                - type
-                - description
-                type: object
+                description: 给用户的自然语言结论
+                type: string
               result:
-                additionalProperties: false
-                properties:
-                  description:
-                    type: string
-                  type:
-                    type: string
-                required:
-                - type
-                - description
-                type: object
+                description: 计算表达式和值，或错误说明
+                type: string
               status:
-                additionalProperties: false
-                properties:
-                  description:
-                    type: string
-                  type:
-                    type: string
-                required:
-                - type
-                - description
-                type: object
+                description: ok/empty/too_long/syntax/unsafe_node/domain
+                type: string
               tool_used:
-                additionalProperties: false
-                properties:
-                  description:
-                    type: string
-                  type:
-                    type: string
-                required:
-                - type
-                - description
-                type: object
+                description: calculator
+                type: string
             required:
             - answer
             - tool_used
@@ -720,7 +724,7 @@ workflow:
       positionAbsolute:
         x: 1088.9267425559458
         y: 163.35494460724212
-      selected: false
+      selected: true
       sourcePosition: right
       targetPosition: left
       type: custom
@@ -739,8 +743,22 @@ workflow:
         prompt_template:
         - id: adf13d90-ef4a-4fea-be20-2324d0f98855
           role: system
-          text: '你把工具的结构化输出和用户原始问题翻译成自然语言结论，输出必须严格符合结构化 schema，不输出任何额外文字或 Markdown
-            代码块。
+          text: '你把 check_commit 工具的结构化输出和用户原始问题翻译成自然语言结论，输出必须严格符合结构化 schema，不输出任何额外文字或
+            Markdown 代码块。
+
+
+
+            字段含义：
+
+            - answer: 给用户的最终结论（通过 / 失败原因摘要），不要超过 200 字
+
+            - tool_used: 固定填 "check_commit"
+
+            - status: 与 check_commit 的 valid 字段同义，取值 "valid" / "invalid"
+
+            - errors: 数组，原样透传 check_commit 的 errors 字段；通过时传空数组 []
+
+            - parsed_summary: 原样透传 check_commit 的 parsed_summary 字段
 
 
             '
@@ -758,63 +776,24 @@ workflow:
         selected: false
         structured_output:
           schema:
-            additionalProperties: false
             properties:
               answer:
-                additionalProperties: false
-                properties:
-                  description:
-                    type: string
-                  type:
-                    type: string
-                required:
-                - type
-                - description
-                type: object
+                description: 给用户的自然语言结论
+                type: string
               errors:
-                additionalProperties: false
-                properties:
-                  description:
-                    type: string
-                  type:
-                    type: string
-                required:
-                - type
-                - description
-                type: object
+                description: 错误列表；通过时为空数组
+                items:
+                  type: string
+                type: array
               parsed_summary:
-                additionalProperties: false
-                properties:
-                  description:
-                    type: string
-                  type:
-                    type: string
-                required:
-                - type
-                - description
-                type: object
+                description: parsed 信息扁平化字符串
+                type: string
               status:
-                additionalProperties: false
-                properties:
-                  description:
-                    type: string
-                  type:
-                    type: string
-                required:
-                - type
-                - description
-                type: object
+                description: valid/invalid
+                type: string
               tool_used:
-                additionalProperties: false
-                properties:
-                  description:
-                    type: string
-                  type:
-                    type: string
-                required:
-                - type
-                - description
-                type: object
+                description: check_commit
+                type: string
             required:
             - answer
             - tool_used
@@ -835,7 +814,7 @@ workflow:
       positionAbsolute:
         x: 1088.9267425559458
         y: 282
-      selected: false
+      selected: true
       sourcePosition: right
       targetPosition: left
       type: custom
@@ -851,22 +830,35 @@ workflow:
           completion_params:
             temperature: 0.7
           mode: chat
-          name: deepseek-v4-flash
-          provider: langgenius/deepseek/deepseek
+          name: qwen3
+          provider: langgenius/ollama/ollama
         prompt_config:
           jinja2_variables: []
         prompt_template:
         - id: 37f87754-483b-4f8e-b6d7-3b60400d3be1
           role: system
-          text: '请基于以下上下文回答：{{{#context#}}
+          text: '请基于以下上下文回答：{{#context#}}
+
+            用户问题：{{#1786419657963.query#}}
+
+            你把知识检索结果和用户问题整合成自然语言结论，输出必须严格符合结构化 schema，不输出任何额外文字或 Markdown 代码块。
 
 
-            用户问题：{{{#1786419657963.query#}}
+            判断知识检索上下文（即上方「上下文」里的 result 片段）再决定 answer：
 
-            你把工具的结构化输出和用户原始问题翻译成自然语言结论，输出必须严格符合结构化 schema，不输出任何额外文字或 Markdown 代码块。
+            - 若 result 片段数组为空（完全没有召回任何内容）→ answer 明确写"知识库未检索到相关内容"，并提示用户换关键词，sources
+            传空数组 []。
+
+            - 若 result 有片段（哪怕只有一句、信息不完整）→ 直接基于这些片段作答，把片段里与问题相关的内容如实组织成结论，sources 列出实际引用到的片段标题；不要判"未检索到"，也不要凭空编造片段里没有的信息。
 
 
-            '
+            字段含义：
+
+            - answer: 基于知识检索上下文的自然语言结论；有片段就返回片段内容，绝不臆造。
+
+            - tool_used: 固定填 "knowledge_retrieval"
+
+            - sources: 数组，列出实际引用到的片段标题或来源；无任何引用时传空数组 []'
         - edition_type: basic
           id: 8c51d8ad-4c10-429b-9e9b-b1bc6d576e8b
           role: user
@@ -874,41 +866,18 @@ workflow:
         selected: false
         structured_output:
           schema:
-            additionalProperties: false
             properties:
               answer:
-                additionalProperties: false
-                properties:
-                  description:
-                    type: string
-                  type:
-                    type: string
-                required:
-                - type
-                - description
-                type: object
+                description: 基于知识检索上下文的自然语言结论
+                type: string
               sources:
-                additionalProperties: false
-                properties:
-                  description:
-                    type: string
-                  type:
-                    type: string
-                required:
-                - type
-                - description
-                type: object
+                description: 引用到的片段标题或路径列表；无引用时为空数组
+                items:
+                  type: string
+                type: array
               tool_used:
-                additionalProperties: false
-                properties:
-                  description:
-                    type: string
-                  type:
-                    type: string
-                required:
-                - type
-                - description
-                type: object
+                description: knowledge_retrieval
+                type: string
             required:
             - answer
             - tool_used
@@ -927,7 +896,7 @@ workflow:
       positionAbsolute:
         x: 1088.9267425559458
         y: 383.9595227619535
-      selected: false
+      selected: true
       sourcePosition: right
       targetPosition: left
       type: custom
@@ -941,13 +910,21 @@ workflow:
           completion_params:
             temperature: 0.7
           mode: chat
-          name: deepseek-v4-flash
-          provider: langgenius/deepseek/deepseek
+          name: qwen3
+          provider: langgenius/ollama/ollama
         prompt_template:
         - id: ca99d1f4-4cb3-49c6-b12f-6db92eb40886
           role: system
-          text: '你把工具的结构化输出和用户原始问题翻译成自然语言结论，输出必须严格符合结构化 schema，不输出任何额外文字或 Markdown
+          text: '你是日常对话助手，根据用户原始问题给出自然语言回复。输出必须严格符合结构化 schema，不输出任何额外文字或 Markdown
             代码块。
+
+
+
+            字段含义：
+
+            - answer: 对用户问题的直接、友好的自然语言回答（不超过 500 字）
+
+            - tool_used: 固定填 "chat"
 
 
             '
@@ -959,30 +936,13 @@ workflow:
         selected: false
         structured_output:
           schema:
-            additionalProperties: false
             properties:
               answer:
-                additionalProperties: false
-                properties:
-                  description:
-                    type: string
-                  type:
-                    type: string
-                required:
-                - type
-                - description
-                type: object
+                description: 对用户问题的自然语言回答
+                type: string
               tool_used:
-                additionalProperties: false
-                properties:
-                  description:
-                    type: string
-                  type:
-                    type: string
-                required:
-                - type
-                - description
-                type: object
+                description: chat
+                type: string
             required:
             - answer
             - tool_used
@@ -1000,14 +960,14 @@ workflow:
       positionAbsolute:
         x: 789.0814143603229
         y: 537.9690562449169
-      selected: false
+      selected: true
       sourcePosition: right
       targetPosition: left
       type: custom
       width: 242
       zIndex: 0
     viewport:
-      x: -50.24603540003113
-      y: 155.47528222601
-      zoom: 0.7430802658275486
+      x: -666.9132027920116
+      y: -23.586421600767366
+      zoom: 0.6219977727457714
   rag_pipeline_variables: []

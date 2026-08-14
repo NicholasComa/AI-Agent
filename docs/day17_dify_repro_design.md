@@ -944,7 +944,7 @@ rm -rf /d/workspace/py_ai/week01_ai_basics/req_d17
 | calc | ✅ 通过 | `text_calc = {status:"ok", answer:"60", result:"(12+8)*3 = 60", tool_used:"calculator"}`，4 字段全为 string，无元 Schema 嵌套；数学正确 |
 | cc | ✅ 通过 | `text_cc = {status:"valid", answer:中文结论, tool_used:"check_commit", errors:[], parsed_summary:"type=func, scope=app, ..."}`，5 字段全为 string/array[string] |
 | kb | ✅ 通过（调参后） | 作者问「《围城》作者是谁？」返回钱锺书+情节+sources；「查找苏小姐」返回真实片段+sources（未再判"未检索到"）。Schema 干净；需 §10.5 的 Top K 10–15 + Score 0.3 + 向量+全文 才召回多片段 |
-| chat | ⏳ 待回归 | 通道此前已通（误输入用例验证过），但 §10.6 配置未单独以标准闲聊用例回归 |
+| chat | ✅ 通过 | 标准闲聊输入「你好，能简单介绍一下你自己吗？」返回 `text_chat = {answer: 自然语言回复, tool_used:"chat"}`，2 字段全为 string |
 
-结论：4 个汇总节点的元 Schema 问题已全部修正并验证（calc / cc / kb 三分支通过）；chat 分支配置同 §10.6、通道已证实可用，仅缺一次标准用例回归。kb 分支「答案单薄」的表现瓶颈已通过检索参数调优（Top K / Score / 检索模式）解决，非 Schema / 配置问题。
+结论：4 个汇总节点的元 Schema 问题已全部修正并验证（calc / cc / kb / chat 四分支全部通过）。kb 分支「答案单薄」的表现瓶颈已通过检索参数调优（Top K / Score / 检索模式）+ §10.5 Prompt 简化解决，非 Schema / 配置问题。
 
