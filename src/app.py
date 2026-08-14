@@ -50,6 +50,7 @@ from contextlib import asynccontextmanager
 from importlib import metadata
 from typing import Any
 
+import httpx
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -62,6 +63,8 @@ from api_models import (
     ChatChunk,
     ChatRequest,
     ChatResponse,
+    DifyRunRequest,
+    DifyRunResponse,
     ErrorBody,
     ErrorResponse,
     HealthModelInfo,
@@ -70,6 +73,7 @@ from api_models import (
     ModelsResponse,
 )
 from config import AppConfig, load_config
+from dify_client import DifyWorkflowClient
 from llm_client import (
     LlmAuthError,
     LlmClient,
@@ -623,6 +627,58 @@ def _register_routes(
         # model_validate_json 不接收额外 kwargs;手动赋值 request_id
         parsed.request_id = rid
         return parsed
+
+    @app.post("/dify/run", response_model=DifyRunResponse)
+    async def dify_run(
+        req: DifyRunRequest,
+        request: Request,
+    ) -> DifyRunResponse:
+        """调用本地 Dify Workflow（由 DIFY_API_KEY 决定具体工作流）。
+
+        请求体：:class:`DifyRunRequest`。
+        响应体：:class:`DifyRunResponse`，`outputs` 透传 Dify 的
+        `data.outputs`（字段由所调用的工作流决定）。
+
+        该端点不经过底层 LLM 客户端，而是直接走 Dify Workflow API；
+        因此 ``request_id`` 仅用于日志关联，不控制 Dify 内部执行。
+        """
+        rid = getattr(request.state, "request_id", None)
+
+        try:
+            client = DifyWorkflowClient()
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
+
+        try:
+            result = await client.run(req.query)
+        except httpx.ConnectError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"无法连接到 Dify 服务 {client.base_url}：{exc}",
+            ) from exc
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Dify 返回非预期状态码 {exc.response.status_code}",
+            ) from exc
+        except httpx.TimeoutException as exc:
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail="Dify 请求超时",
+            ) from exc
+
+        return DifyRunResponse(
+            query=result.query,
+            outputs=result.outputs,
+            status=result.status,
+            elapsed_time=result.elapsed_time,
+            total_tokens=result.total_tokens,
+            workflow_run_id=result.workflow_run_id,
+            request_id=rid,
+        )
 
 
 # ---------------------------------------------------------------------------

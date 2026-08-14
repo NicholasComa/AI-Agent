@@ -172,6 +172,52 @@ class AnalyzeRequirementResponse(RequirementAnalysis):
 
 
 # ---------------------------------------------------------------------------
+# Dify Workflow 接口：POST /dify/run（通用透传）
+# ---------------------------------------------------------------------------
+
+
+class DifyRunRequest(BaseModel):
+    """``POST /dify/run`` 的请求体。
+
+    Attributes:
+        query: 要交给 Dify 工作流 `开始` 节点的用户请求。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(
+        ...,
+        min_length=1,
+        max_length=4000,
+        description="用户原始请求，将原样传入 Dify 工作流的 query 变量",
+    )
+
+
+class DifyRunResponse(BaseModel):
+    """``POST /dify/run`` 的响应体。
+
+    ``outputs`` 即 Dify ``data.outputs``，因为不同工作流输出结构不同，
+    这里用 ``dict[str, Any]`` 透传，调用方按实际工作流字段自行解析。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(..., description="原始请求")
+    outputs: dict[str, Any] = Field(
+        ...,
+        description="Dify 工作流输出（字段由所调用工作流决定，例如 text_calc / final_output 等）",
+    )
+    status: str | None = Field(default=None, description="Dify 执行状态")
+    elapsed_time: float | None = Field(default=None, description="Dify 执行耗时（秒）")
+    total_tokens: int | None = Field(default=None, description="总 token 数")
+    workflow_run_id: str | None = Field(default=None, description="Dify workflow_run_id")
+    request_id: str | None = Field(
+        default=None,
+        description="服务端 request_id（与响应头 X-Request-ID 同源）",
+    )
+
+
+# ---------------------------------------------------------------------------
 # 健康检查：GET /health
 # ---------------------------------------------------------------------------
 
