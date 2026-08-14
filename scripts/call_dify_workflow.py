@@ -47,8 +47,7 @@ DEFAULT_BASE_URL = "https://api.dify.ai/v1"
 # 教程工作流的输入变量（与「用户输入」节点定义一致）
 SAMPLE_INPUTS = {
     "draft": (
-        "We just launched a new AI writing assistant that helps teams "
-        "create content 10x faster."
+        "We just launched a new AI writing assistant that helps teams create content 10x faster."
     ),
     "platform": "Twitter and LinkedIn",
     "language": "English",

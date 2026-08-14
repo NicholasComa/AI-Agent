@@ -1,0 +1,1077 @@
+app:
+  description: 一个简单的需求分析workflow
+  icon: d86516a4-4296-4960-a46d-636edab7695e
+  icon_background: null
+  icon_type: image
+  mode: workflow
+  name: RequirementAnalysis_Dify
+  use_icon_as_answer_icon: false
+dependencies:
+- current_identifier: null
+  type: marketplace
+  value:
+    marketplace_plugin_unique_identifier: langgenius/ollama:1.0.0@86dd6101fbd9de94e6681782700fa98c8a785c982918e6fe0ec21d507e15ba3f
+    version: null
+- current_identifier: null
+  type: marketplace
+  value:
+    marketplace_plugin_unique_identifier: langgenius/deepseek:0.0.19@1aa3c64e2f50179afe8410ad79412dab92bf5919a27da8e2b13071b5e5f8ce81
+    version: null
+kind: app
+version: 0.7.0
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    file_upload: {}
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      language: ''
+      voice: ''
+  graph:
+    edges:
+    - data:
+        isInIteration: false
+        isInLoop: false
+        iteration_id: null
+        loop_id: null
+        sourceType: start
+        targetType: llm
+      id: 1786588770923-source-1786589115050-target
+      selected: false
+      source: '1786588770923'
+      sourceHandle: source
+      target: '1786589115050'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        iteration_id: null
+        loop_id: null
+        sourceType: llm
+        targetType: parameter-extractor
+      id: 1786589115050-source-1786608885580-target
+      selected: false
+      source: '1786589115050'
+      sourceHandle: source
+      target: '1786608885580'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        iteration_id: null
+        loop_id: null
+        sourceType: if-else
+        targetType: llm
+      id: 1786591728345-false-1786607691238-target
+      selected: false
+      source: '1786591728345'
+      sourceHandle: 'false'
+      target: '1786607691238'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        iteration_id: null
+        loop_id: null
+        sourceType: if-else
+        targetType: llm
+      id: 1786591728345-true-1786591914888-target
+      selected: false
+      source: '1786591728345'
+      sourceHandle: 'true'
+      target: '1786591914888'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        iteration_id: null
+        loop_id: null
+        sourceType: llm
+        targetType: llm
+      id: 1786591914888--1786593559832-target
+      selected: false
+      source: '1786591914888'
+      sourceHandle: source
+      target: '1786593559832'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        iteration_id: null
+        loop_id: null
+        sourceType: llm
+        targetType: llm
+      id: 1786593559832-source-1786593577831-target
+      selected: false
+      source: '1786593559832'
+      sourceHandle: source
+      target: '1786593577831'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        iteration_id: null
+        loop_id: null
+        sourceType: llm
+        targetType: variable-aggregator
+      id: 1786593577831-source-1786601408128-target
+      selected: false
+      source: '1786593577831'
+      sourceHandle: source
+      target: '1786601408128'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        iteration_id: null
+        loop_id: null
+        sourceType: variable-aggregator
+        targetType: end
+      id: 1786601408128--1786601813372-target
+      selected: false
+      source: '1786601408128'
+      sourceHandle: source
+      target: '1786601813372'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        iteration_id: null
+        loop_id: null
+        sourceType: llm
+        targetType: variable-aggregator
+      id: 1786607691238-source-1786601408128-target
+      selected: false
+      source: '1786607691238'
+      sourceHandle: source
+      target: '1786601408128'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        iteration_id: null
+        loop_id: null
+        sourceType: parameter-extractor
+        targetType: if-else
+      id: 1786608885580-source-1786591728345-target
+      selected: false
+      source: '1786608885580'
+      sourceHandle: source
+      target: '1786591728345'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    nodes:
+    - data:
+        selected: false
+        title: 用户输入
+        type: start
+        variables:
+        - default: ''
+          hint: ''
+          label: query
+          max_length: 256
+          options: []
+          placeholder: ''
+          required: true
+          type: text-input
+          variable: query
+      height: 110
+      id: '1786588770923'
+      position:
+        x: -106.15974448275867
+        y: 103.21524683788655
+      positionAbsolute:
+        x: -106.15974448275867
+        y: 103.21524683788655
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 243
+      zIndex: 0
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            temperature: 0.7
+            thinking: false
+          mode: chat
+          name: deepseek-v4-pro
+          provider: langgenius/deepseek/deepseek
+        prompt_config:
+          jinja2_variables: []
+        prompt_template:
+        - edition_type: basic
+          id: e8aa22a8-0300-4a24-b9ab-469312d2273c
+          role: system
+          text: "你是一名需求分析工程师。请从下方的需求文本中提取关键参数。\n\n提取规则：\n1. feature_points：功能点列表，每个功能点一句话。\n\
+            2. roles：涉及角色列表。\n3. constraints：约束条件列表（时间、预算、技术、合规等）。\n4. priority：优先级，取值为\
+            \ \"高\" / \"中\" / \"低\" 之一。如果文本未明确，默认 \"中\"。\n5. acceptance_criteria：验收标准列表。如果文本未明确，填入\
+            \ [\"未明确\"]。\n6. business_domain：业务域，从 [\"电商\", \"金融\", \"教育\", \"医疗\"\
+            , \"制造\", \"物流\", \"政务\", \"社交\", \"其他\"] 中选一个最接近的。\n7. module：所属模块，文本未明确则填\
+            \ \"未明确\"。\n8. tech_keywords：技术关键词列表。\n9. dependencies：依赖系统/接口/数据列表，未提及填\
+            \ []。\n10. deadline：截止日期或时间约束，未提及填 \"未明确\"。\n11. resources：人力/预算/硬件资源约束，未提及填\
+            \ \"未明确\"。\n12. is_actionable：需求是否足够明确可直接进入分类和风险分析。判断逻辑（必须严格按顺序执行，不要凭感觉）：\n\
+            \    a) 数 feature_points 数组中的元素个数。如果为 0，is_actionable = \"false\"。\n \
+            \   b) 数 roles 数组中的元素个数。如果为 0，is_actionable = \"false\"。\n    c) 数 constraints\
+            \ 数组中的元素个数。如果为 0，is_actionable = \"false\"。\n    d) 如果 a/b/c 都至少有 1 个元素，is_actionable\
+            \ = \"true\"。\n    e) 不要重复以上判断后改主意。一旦确定就不要再修改。\n    输出字符串 \"true\" 或 \"\
+            false\"。\n13. confidence：对提取结果的信心分数 0.0–1.0。\n14. missing_fields：仅当 is_actionable\
+            \ 为 \"false\" 时填写。列出\"本应该提取但实际没有提取到\"的关键字段。\n    - 如果 is_actionable =\
+            \ \"true\"，填 []。\n    - 如果 is_actionable = \"false\"，列出实际为空的字段：\n    \
+            \  * feature_points 为空 → 加 \"feature_points\"\n      * roles 为空 → 加 \"\
+            roles\"\n      * constraints 为空 → 加 \"constraints\"\n      * acceptance_criteria\
+            \ 仅为 [\"未明确\"] → 加 \"acceptance_criteria\"\n      * deadline 为 \"未明确\"\
+            \ → 加 \"deadline\"\n      * resources 为 \"未明确\" → 加 \"resources\"\n  \
+            \  - 不要列出已经成功提取到的字段。\n\n注意：\n- is_actionable 必须是字符串 \"true\" 或 \"false\"\
+            ，不要输出布尔值 true/false。\n- missing_fields 必须是字符串数组。\n- 不要输出任何 JSON 以外的内容。\n\
+            - 绝对不要输出 <think>、思考过程、Markdown、解释或分析文字，只输出纯 JSON。\n- 不要输出 Schema 定义或字段类型说明，按字段填实际数据值。\n"
+        - id: 6b8ed4c6-d8bb-4b52-ba47-ca42ecf21222
+          role: user
+          text: 需求文本：{{#1786588770923.query#}}
+        reasoning_format: tagged
+        selected: false
+        structured_output:
+          schema:
+            additionalProperties: false
+            properties:
+              properties:
+                additionalProperties: false
+                properties:
+                  acceptance_criteria:
+                    additionalProperties: false
+                    properties:
+                      items:
+                        additionalProperties: false
+                        properties:
+                          type:
+                            type: string
+                        required:
+                        - type
+                        type: object
+                      type:
+                        type: string
+                    required:
+                    - type
+                    - items
+                    type: object
+                  business_domain:
+                    additionalProperties: false
+                    properties:
+                      enum:
+                        items:
+                          type: string
+                        type: array
+                      type:
+                        type: string
+                    required:
+                    - type
+                    - enum
+                    type: object
+                  confidence:
+                    additionalProperties: false
+                    properties:
+                      maximum:
+                        type: number
+                      minimum:
+                        type: number
+                      type:
+                        type: string
+                    required:
+                    - type
+                    - minimum
+                    - maximum
+                    type: object
+                  constraints:
+                    additionalProperties: false
+                    properties:
+                      items:
+                        additionalProperties: false
+                        properties:
+                          type:
+                            description: null
+                            enum: null
+                            type: string
+                        required:
+                        - type
+                        type: object
+                      type:
+                        type: string
+                    required:
+                    - type
+                    - items
+                    type: object
+                  deadline:
+                    additionalProperties: false
+                    properties:
+                      type:
+                        type: string
+                    required:
+                    - type
+                    type: object
+                  dependencies:
+                    additionalProperties: false
+                    properties:
+                      items:
+                        additionalProperties: false
+                        properties:
+                          type:
+                            type: string
+                        required:
+                        - type
+                        type: object
+                      type:
+                        type: string
+                    required:
+                    - type
+                    - items
+                    type: object
+                  feature_points:
+                    additionalProperties: false
+                    properties:
+                      items:
+                        additionalProperties: false
+                        properties:
+                          type:
+                            description: null
+                            enum: null
+                            type: string
+                        required:
+                        - type
+                        type: object
+                      type:
+                        type: string
+                    required:
+                    - type
+                    - items
+                    type: object
+                  is_actionable:
+                    additionalProperties: false
+                    properties:
+                      enum:
+                        items:
+                          type: string
+                        type: array
+                      type:
+                        type: string
+                    required:
+                    - type
+                    - enum
+                    type: object
+                  missing_fields:
+                    additionalProperties: false
+                    properties:
+                      items:
+                        additionalProperties: false
+                        properties:
+                          type:
+                            description: null
+                            enum: null
+                            type: string
+                        required:
+                        - type
+                        type: object
+                      type:
+                        description: null
+                        enum: null
+                        type: string
+                    required:
+                    - type
+                    - items
+                    type: object
+                  module:
+                    additionalProperties: false
+                    description: null
+                    enum: null
+                    properties:
+                      type:
+                        type: string
+                    required:
+                    - type
+                    type: object
+                  priority:
+                    additionalProperties: false
+                    description: null
+                    enum: null
+                    properties:
+                      enum:
+                        items:
+                          type: string
+                        type: array
+                      type:
+                        type: string
+                    required:
+                    - type
+                    - enum
+                    type: object
+                  resources:
+                    additionalProperties: false
+                    properties:
+                      type:
+                        type: string
+                    required:
+                    - type
+                    type: object
+                  roles:
+                    additionalProperties: false
+                    properties:
+                      items:
+                        additionalProperties: false
+                        description: null
+                        enum: null
+                        properties:
+                          type:
+                            type: string
+                        required:
+                        - type
+                        type: object
+                      type:
+                        type: string
+                    required:
+                    - type
+                    - items
+                    type: object
+                  tech_keywords:
+                    additionalProperties: false
+                    properties:
+                      items:
+                        additionalProperties: false
+                        properties:
+                          type:
+                            type: string
+                        required:
+                        - type
+                        type: object
+                      type:
+                        description: null
+                        enum: null
+                        type: string
+                    required:
+                    - type
+                    - items
+                    type: object
+                required:
+                - feature_points
+                - roles
+                - constraints
+                - priority
+                - acceptance_criteria
+                - business_domain
+                - module
+                - tech_keywords
+                - dependencies
+                - deadline
+                - resources
+                - is_actionable
+                - confidence
+                - missing_fields
+                type: object
+              required:
+                description: null
+                enum: null
+                items:
+                  type: string
+                type: array
+              type:
+                type: string
+            required:
+            - type
+            - properties
+            - required
+            type: object
+        structured_output_enabled: false
+        title: LLM 1 参数提取
+        type: llm
+        vision:
+          enabled: false
+      height: 89
+      id: '1786589115050'
+      position:
+        x: 46.825432252052025
+        y: 249.81819212828412
+      positionAbsolute:
+        x: 46.825432252052025
+        y: 249.81819212828412
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 243
+      zIndex: 0
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - comparison_operator: contains
+            id: afef8cee-155d-4861-9ad3-1406f67da53a
+            value: 'true'
+            varType: string
+            variable_selector:
+            - '1786608885580'
+            - is_actionable
+          id: 'true'
+          logical_operator: and
+        selected: false
+        title: 条件分支
+        type: if-else
+      height: 149
+      id: '1786591728345'
+      position:
+        x: 504.0000000000001
+        y: 301.82723381361245
+      positionAbsolute:
+        x: 504.0000000000001
+        y: 301.82723381361245
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 243
+      zIndex: 0
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            temperature: 0.5
+            think: false
+          mode: chat
+          name: qwen3
+          provider: langgenius/ollama/ollama
+        prompt_template:
+        - id: f8a4a9ff-d3c2-4569-af53-03fd41e1fca4
+          role: system
+          text: '你是一名需求分类专家。请根据下方的需求文本和参数提取结果，对需求进行分类。
+
+
+            分类规则：
+
+            1. type：需求类型，取值为 "功能需求" / "非功能需求" / "缺陷修复" / "优化改进" / "其他"。
+
+            2. business_domain：业务域，从 ["电商", "金融", "教育", "医疗", "制造", "物流", "政务", "社交",
+            "其他"] 中选择。
+
+            3. complexity：复杂度等级，取值为 "简单" / "中等" / "复杂" / "极复杂"。
+
+            4. complexity_score：复杂度量化评分，1–10 整数。
+
+            5. complexity_factors：复杂度来源列表（如 "涉及多角色", "依赖外部系统", "时间紧迫", "数据量大" 等）。
+
+            6. reasoning：分类理由，50–150 字。
+
+
+            评分参考：
+
+            - 简单：1–3 分
+
+            - 中等：4–6 分
+
+            - 复杂：7–8 分
+
+            - 极复杂：9–10 分
+
+
+            注意：
+
+            - 不要输出任何 JSON 以外的内容。
+
+            - 绝对不要输出 <think>、思考过程、Markdown、解释或分析文字，只输出纯 JSON。
+
+            - 不要输出 Schema 定义或字段类型说明，按字段填实际数据值。
+
+            '
+        - id: 6f12c33c-62c1-4340-a585-8d96bffe6e62
+          role: user
+          text: '需求文本：
+
+            {{#1786588770923.query#}}
+
+
+            参数提取结果：
+
+            {{#1786589115050.text#}}'
+        selected: false
+        structured_output:
+          schema:
+            properties:
+              business_domain:
+                type: string
+              complexity:
+                enum:
+                - 简单
+                - 中等
+                - 复杂
+                - 极复杂
+                type: string
+              complexity_factors:
+                items:
+                  type: string
+                type: array
+              complexity_score:
+                maximum: 10
+                minimum: 1
+                type: integer
+              reasoning:
+                type: string
+              type:
+                enum:
+                - 功能需求
+                - 非功能需求
+                - 缺陷修复
+                - 优化改进
+                - 其他
+                type: string
+            required:
+            - type
+            - business_domain
+            - complexity
+            - complexity_score
+            - complexity_factors
+            - reasoning
+            type: object
+        structured_output_enabled: true
+        title: LLM 2 需求分类
+        type: llm
+        vision:
+          enabled: false
+      height: 89
+      id: '1786591914888'
+      position:
+        x: 782
+        y: 99.00000000000003
+      positionAbsolute:
+        x: 782
+        y: 99.00000000000003
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 243
+      zIndex: 0
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            temperature: 0.5
+            think: false
+          mode: chat
+          name: qwen3
+          provider: langgenius/ollama/ollama
+        prompt_template:
+        - id: 6d69565c-a5d4-4f87-b4ec-e27eab61c757
+          role: system
+          text: "你是一名项目风险分析专家。请根据参数提取结果和需求分类结果，识别风险。\n\n风险类型（risk_type 枚举）：\n- 需求变更风险\n\
+            - 技术实现风险\n- 进度风险\n- 资源风险\n- 合规/安全风险\n- 集成依赖风险\n- 用户体验风险\n- 性能风险\n\n每个风险字段：\n\
+            - risk_type：风险类型\n- likelihood：可能性，1–5 整数\n- impact：影响度，1–5 整数\n- score：风险分值\
+            \ = likelihood × impact，1–25\n- level：风险等级，由 score 决定\n  - 1–4：low\n \
+            \ - 5–9：medium\n  - 10–15：high\n  - 16–25：critical\n- mitigation：缓解措施，30–100\
+            \ 字\n\n输出字段：\n1. risks：风险列表（数组），每个元素含上述字段。\n2. overall_risk_level：整体风险等级，取\
+            \ risks 中最高 level（critical > high > medium > low）。\n3. overall_risk_score：整体风险分数，取\
+            \ risks 中最高 score。\n4. risk_count_by_level：各等级风险数量对象，如 {\"low\": 1, \"\
+            medium\": 2, \"high\": 0, \"critical\": 0}。\n\n注意：\n- 不要输出任何 JSON 以外的内容。\n\
+            - 绝对不要输出 <think>、思考过程、Markdown、解释或分析文字，只输出纯 JSON。\n- 不要输出 Schema 定义或字段类型说明，按字段填实际数据值。\n"
+        - id: 34bf2786-9392-4ba5-bb61-6c890e912dce
+          role: user
+          text: '参数提取结果（JSON）：
+
+            {{#1786589115050.text#}}
+
+
+            分类结果（JSON）：
+
+            {{#1786591914888.text#}}'
+        selected: false
+        structured_output:
+          schema:
+            properties:
+              overall_risk_level:
+                enum:
+                - low
+                - medium
+                - high
+                - critical
+                type: string
+              overall_risk_score:
+                maximum: 25
+                minimum: 1
+                type: integer
+              risk_count_by_level:
+                properties:
+                  critical:
+                    type: integer
+                  high:
+                    type: integer
+                  low:
+                    type: integer
+                  medium:
+                    type: integer
+                type: object
+              risks:
+                items:
+                  properties:
+                    impact:
+                      maximum: 5
+                      minimum: 1
+                      type: integer
+                    level:
+                      enum:
+                      - low
+                      - medium
+                      - high
+                      - critical
+                      type: string
+                    likelihood:
+                      maximum: 5
+                      minimum: 1
+                      type: integer
+                    mitigation:
+                      type: string
+                    risk_type:
+                      type: string
+                    score:
+                      maximum: 25
+                      minimum: 1
+                      type: integer
+                  required:
+                  - risk_type
+                  - likelihood
+                  - impact
+                  - score
+                  - level
+                  - mitigation
+                  type: object
+                type: array
+            required:
+            - risks
+            - overall_risk_level
+            - overall_risk_score
+            - risk_count_by_level
+            type: object
+        structured_output_enabled: true
+        title: LLM 3 风险分析
+        type: llm
+        vision:
+          enabled: false
+      height: 89
+      id: '1786593559832'
+      position:
+        x: 782
+        y: 221.03659711832546
+      positionAbsolute:
+        x: 782
+        y: 221.03659711832546
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 243
+      zIndex: 0
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            temperature: 0.6
+            think: false
+          mode: chat
+          name: qwen3
+          provider: langgenius/ollama/ollama
+        prompt_template:
+        - id: c1b3835d-1ae7-4c55-b882-fb2b37661b92
+          role: system
+          text: '你是一名需求分析汇总专家。请将参数提取、需求分类、风险分析三个环节的结果整合成一份最终结构化需求分析报告。
+
+
+            输出字段：
+
+            1. raw_requirement：原始需求文本（原样返回）。
+
+            2. extracted_params：参数提取结果（对象）。
+
+            3. classification：需求分类结果（对象）。
+
+            4. risk_analysis：风险分析结果（对象）。
+
+            5. summary：整体摘要，100–200 字。
+
+            6. recommendations：后续建议列表，3–5 条。
+
+            7. follow_up_questions：补充问题列表，需求已完整时填 []，仍有模糊点时填 1–3 个问题。
+
+
+            注意：
+
+            - 不要输出任何 JSON 以外的内容。
+
+            - 绝对不要输出 <think>、思考过程、Markdown、解释或分析文字，只输出纯 JSON。
+
+            - 不要输出 Schema 定义或字段类型说明，按字段填实际数据值。
+
+            '
+        - id: a56e62dc-28ab-4f3d-81d2-29b17a25273c
+          role: user
+          text: '原始需求：
+
+            {{#1786588770923.query#}}
+
+
+            参数提取结果（JSON）：
+
+            {{#1786589115050.text#}}
+
+
+            需求分类结果（JSON）：
+
+            {{#1786591914888.text#}}
+
+
+            风险分析结果（JSON）：
+
+            {{#1786593559832.text#}}'
+        selected: false
+        structured_output:
+          schema:
+            properties:
+              classification:
+                type: object
+              extracted_params:
+                type: object
+              follow_up_questions:
+                items:
+                  type: string
+                type: array
+              raw_requirement:
+                type: string
+              recommendations:
+                items:
+                  type: string
+                type: array
+              risk_analysis:
+                type: object
+              summary:
+                type: string
+            required:
+            - raw_requirement
+            - extracted_params
+            - classification
+            - risk_analysis
+            - summary
+            - recommendations
+            - follow_up_questions
+            type: object
+        structured_output_enabled: true
+        title: LLM 4 结构化汇总
+        type: llm
+        vision:
+          enabled: false
+      height: 89
+      id: '1786593577831'
+      position:
+        x: 782
+        y: 329.00000000000006
+      positionAbsolute:
+        x: 782
+        y: 329.00000000000006
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 243
+      zIndex: 0
+    - data:
+        advanced_settings:
+          group_enabled: true
+          groups:
+          - groupId: 07b832fb-b803-432c-af76-93a2ef6a802b
+            group_name: final_output
+            output_type: object
+            variables:
+            - - '1786593577831'
+              - structured_output
+          - groupId: bd293c6b-b47a-46a6-b3f3-5681c2ceddd2
+            group_name: follow_up_only
+            output_type: string
+            variables:
+            - - '1786607691238'
+              - text
+        output_type: any
+        selected: false
+        title: 变量聚合器
+        type: variable-aggregator
+        variables: []
+      height: 166
+      id: '1786601408128'
+      position:
+        x: 1085.9004280502634
+        y: 329.00000000000006
+      positionAbsolute:
+        x: 1085.9004280502634
+        y: 329.00000000000006
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 243
+      zIndex: 0
+    - data:
+        outputs:
+        - value_selector:
+          - '1786601408128'
+          - final_output
+          - output
+          value_type: object
+          variable: final_output
+        - value_selector:
+          - '1786601408128'
+          - follow_up_only
+          - output
+          value_type: object
+          variable: follow_up_only
+        selected: false
+        title: 输出
+        type: end
+      height: 117
+      id: '1786601813372'
+      position:
+        x: 1366.6178705088992
+        y: 329.00000000000006
+      positionAbsolute:
+        x: 1366.6178705088992
+        y: 329.00000000000006
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 243
+      zIndex: 0
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            temperature: 0.7
+            think: false
+          mode: chat
+          name: qwen3
+          provider: langgenius/ollama/ollama
+        prompt_template:
+        - id: 5670b48a-1d70-43a4-8a29-f73f828a62fe
+          role: system
+          text: '你是一名需求澄清助手。用户给出的需求信息不足，请根据缺失字段列表，生成 3–5 个具体的追问问题。
+
+
+            要求：
+
+            - 每个追问单独成句，列出具体的缺失字段名（如"功能点"、"角色"、"约束条件"、"验收标准"等）。
+
+            - 用问号结尾。
+
+            - 不要笼统地说"补充信息"，要明确指出要用户补什么。
+
+            - 输出为一段纯文本，每行一个问题。'
+        - id: b3419c0b-5570-4c19-8d8e-63494281bfaa
+          role: user
+          text: '参数提取结果：
+
+            {{{#1786589115050.text#}}}
+
+
+
+            请根据 missing_fields 字段生成追问文本。'
+        selected: false
+        title: LLM 5 补充提问
+        type: llm
+        vision:
+          enabled: false
+      height: 89
+      id: '1786607691238'
+      position:
+        x: 782
+        y: 456.8587794051896
+      positionAbsolute:
+        x: 782
+        y: 456.8587794051896
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 243
+      zIndex: 0
+    - data:
+        instruction: "从输入文本中提取 is_actionable 字段的值。\n\n要求：\n1. 只输出一个 JSON 对象，格式必须严格为：{\"\
+          is_actionable\": \"true\"} 或 {\"is_actionable\": \"false\"}\n2. 不要输出任何其他文字、解释、Markdown、代码块标记（不要\
+          \ ``` 包裹）\n3. 如果输入中包含 <think>、 标签，请忽略标签内的全部内容\n4. 转换规则：\n   - 若原值为布尔值 true、字符串\
+          \ \"true\" / \"True\" / \"TRUE\" → 输出 \"true\"\n   - 若原值为布尔值 false、字符串 \"\
+          false\" / \"False\" / \"FALSE\" → 输出 \"false\"\n   - 找不到字段或值为空 → 输出 \"false\""
+        model:
+          completion_params:
+            temperature: 0.7
+            think: false
+            thinking: false
+          mode: chat
+          name: deepseek-v4-pro
+          provider: langgenius/deepseek/deepseek
+        parameters:
+        - description: 判断
+          name: is_actionable
+          required: false
+          type: string
+        query:
+        - '1786589115050'
+        - text
+        reasoning_mode: prompt
+        selected: false
+        title: 参数提取器
+        type: parameter-extractor
+        vision:
+          enabled: false
+      height: 89
+      id: '1786608885580'
+      position:
+        x: 220.03669942117233
+        y: 400.2121415600002
+      positionAbsolute:
+        x: 220.03669942117233
+        y: 400.2121415600002
+      selected: true
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 243
+      zIndex: 0
+    viewport:
+      x: 333.3219805802793
+      y: 209.59711317439417
+      zoom: 1.093899285255427
+  rag_pipeline_variables: []
