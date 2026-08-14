@@ -645,7 +645,7 @@ def _register_routes(
         rid = getattr(request.state, "request_id", None)
 
         try:
-            client = DifyWorkflowClient()
+            client = DifyWorkflowClient(timeout=300)
         except ValueError as exc:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
