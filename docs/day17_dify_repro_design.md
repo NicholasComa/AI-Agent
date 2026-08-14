@@ -20,6 +20,7 @@
 8. 实测问题记录
 9. 交付物（Day 17）
 10. 附录：备选方案（Agent 应用模式）
+11. Day 17 工作流配置修正（2026-08-14 联调发现）
 
 ---
 
@@ -245,8 +246,27 @@ graph TB
          read_file 时把用户原问题整体放入 query。
    示例输出：{"tool":"calculator","expression":"(12+8)*3","message":"","query":"","question":""}
    ```
-5. 点 **添加消息** → 用户消息，用 `{` 或变量选择器插入 `开始/query`。
-6. 开启 **结构化输出**：切到 **结构化** 开关 → 点 **配置** → **从 JSON 导入**，粘贴上述 JSON 结构，确认输出字段 `tool / expression / message / query / question` 都已声明。
+5. 添加用户消息：在节点面板 **消息（Messages）** 区点 **+ 添加消息** → 角色 **USER** → 正文区直接打一个 `{` 触发变量选择器，或点正文区左侧的 `{x}` 变量按钮 → 从弹出的变量树里选 **开始（用户输入）/ query**（节点名若你改过，按实际节点名选） → 确认正文变成 `{{#开始.query#}}`。
+6. 开启结构化输出并配置 Schema（**关键步骤，按顺序操作**）：
+   1. 在节点面板底部（或右侧，取决于 Dify 版本）找到标签页 **结构化输出（Structured Output）**，点进去（与「提示词」「调试」标签并列）。
+   2. 把 **结构化输出** 开关切到 **ON**（蓝/绿色）。开关下方出现 **Schema（JSON）** 编辑框。
+   3. 点编辑框上边的 {}JSON Schema按钮（不同版本按钮文案略有差异），弹出 JSON 输入对话框。
+   4. **把下面这段 JSON 整段粘贴进对话框**（这才是步骤 3 真正要粘贴的 JSON 结构，前面的描述只是在 System Prompt 里讲解字段含义，不是结构化输出 Schema 本身）：
+      ```json
+      {
+        "type": "object",
+        "properties": {
+          "tool":       {"type": "string"},
+          "expression": {"type": "string"},
+          "message":    {"type": "string"},
+          "query":      {"type": "string"},
+          "question":   {"type": "string"}
+        },
+        "required": ["tool", "expression", "message", "query", "question"]
+      }
+      ```
+   5. 点 **确认 / 导入** → Schema 编辑框下方应出现 **字段清单预览**：`tool / expression / message / query / question`（顺序不限，5 个都要在）。若只显示 3-4 个，说明 JSON 没粘贴完整或 `required` 写了多余字段——回到上一步重新粘贴。
+   6. **⚠️ 不要在 System Prompt（步骤 4 已粘贴的那段）里再追加任何 JSON Schema 文本块**——结构化输出机制会自动注入 Schema，重复声明会让模型困惑「到底用哪个 Schema」。System Prompt 只用自然语言说明字段含义即可。
 
 ### 步骤 4 — 添加 IF/ELSE 路由节点
 1. 在 **意图分类** 后 **添加一个 IF/ELSE 节点**。
@@ -633,4 +653,298 @@ def main(message: str) -> dict:
 - 创建 Agent 应用 → 添加 3 个 **代码工具**（calculator / check_commit_message 同上；read_text_file 仍只能用知识库工具替代）；
 - 系统提示词直接用代码版的 `SYSTEM_PROMPT`（见 `dev_assistant_agent.py`）；
 - 优点：Agent 自己决定调哪个工具，最像原版；缺点：**导出的不是 Workflow DSL**，与 Day 17「可视化工作流 + DSL 导出」交付物略有出入，且 Gate 2 对「节点输入输出」的解释力弱一些。
+
+---
+
+## 10. Day 17 工作流配置修正（2026-08-14 联调发现）
+
+> 本节是 Day 17 设计文档的**修正性附录**。2026-08-14 在本机用 FastAPI（`POST /dify/run`）联调 `DevAssistantAgent_Dify` 时，发现已发布工作流中**所有 4 个「汇总回答」LLM 节点的结构化输出 Schema 都被填成了「元 Schema」**——即每个业务字段（如 `answer` / `tool_used` / `sources`）不是 `string` / `array[string]`，而是嵌套对象 `{type: string, description: string}`。这种 Schema 设计在 Dify 的本地模型下会让模型：
+> 1. **要么**把 Schema 原样吐回当数据（最严重，常见于 `汇总回答_KB`）；
+> 2. **要么**把同一个答案重复填进 4 个 `type`/`description` 字段（calculator 的实际表现，虽能用但极冗余）。
+>
+> 本节给出按节点逐个修正的**完整步骤 + 完整 Schema + 完整 Prompt**，可直接在画布里照抄执行。修正完成后需**重新发布**（API 调用的是已发布版本），然后用 `POST /dify/run` 跑四个分支回归。
+
+### 10.1 问题清单
+
+| # | 节点 | DSL 里的现状 | 现象 | 根因 |
+|---|---|---|---|---|
+| 1 | 汇总回答_KB | `answer` / `tool_used` / `sources` 都是 `{type, description}` 嵌套对象 | API 返回的 `text_kb` 是元 Schema 本身 | 同 §10 总述 |
+| 2 | 汇总回答_CALC | `answer` / `tool_used` / `status` / `result` 都是 `{type, description}` 嵌套对象 | API 返回的 `text_calc` 4 个字段重复填同一段结论 | 同 §10 总述 |
+| 3 | 汇总回答_CC | `answer` / `tool_used` / `status` / `errors` / `parsed_summary` 都是 `{type, description}` 嵌套对象 | API 返回的 `text_cc` 字段嵌套冗余 | 同 §10 总述 |
+| 4 | 汇总回答_CHAT | `answer` / `tool_used` 都是 `{type, description}` 嵌套对象 | API 返回的 `text_chat` 字段嵌套冗余 | 同 §10 总述 |
+| 5 | 知识库（kb 分支） | 仅上传小说《围城》 | 知识检索分支只能答《围城》相关问题 | §7 设计时就标注无现成语料 |
+
+> **为什么 4 个汇总节点都有这个问题？** 因为它们是同一时间按同一模板（带 `type`/`description` 元字段的 Schema）批量配置的——画布里复制粘贴省事，但元字段对 Dify 结构化输出机制是噪声。下面 4 个修正步骤的 Schema 全部按 §8 设计原意改成**叶子字段为 `string` 或 `array[string]`** 的干净业务 Schema，与设计文档 §8.1–8.4 一致。
+
+### 10.2 通用前置
+
+进入 **Studio** → 应用 `DevAssistantAgent_Dify` → 工作流画布。后续步骤按节点逐个打开配置面板修改。
+
+修改任何一个 LLM 节点的结构化输出 Schema：
+1. 点开该节点 → 切到 **结构化输出** 标签 → 打开 **结构化输出** 开关；
+2. 把「Schema」输入框里**整段 JSON 删空**，粘贴下面给出的对应干净 Schema；
+3. **同时检查系统指令**：确认**没有**在 System Prompt 里粘贴 Schema 文本（否则模型会困惑「到底用哪个 Schema」），只保留字段说明；
+4. 修改完不要点发布——4 个节点全改完再统一发布。
+
+> 节点命名以画布实际为准（DSL 里 `汇总回答_CALC` 实际画布名 = `汇总回答_CALC`，但 KB 那节点因复制时多了 tab 字符，DSL 里写为 `"\t汇总回答_KB"`，画布里正常显示为 `汇总回答_KB`）。
+
+### 10.3 修正 汇总回答_CALC（calculator 分支）
+
+**模型**：qwen3（`provider: langgenius/ollama/ollama`，`temperature: 0.7`）
+
+**User 消息内容**（在「消息 → USER」里依次插入以下变量）：
+```
+用户问题：{{#用户输入.query#}}
+
+计算结果：{{#calculator.value#}}
+错误信息：{{#calculator.error#}}
+结果分类：{{#calculator.kind#}}
+自然语言总结：{{#calculator.summary#}}
+```
+
+**System Prompt**（清空原内容，粘贴下面完整文本——**不要**包含任何 JSON Schema 块）：
+```
+你把 calculator 工具的结构化输出和用户原始问题翻译成自然语言结论，输出必须严格符合结构化 schema，不输出任何额外文字或 Markdown 代码块。
+
+字段含义：
+- answer: 给用户的一句话结论（必填，例如"60"、"计算失败：除零"）
+- tool_used: 固定填 "calculator"
+- status: 与 calculator 的 kind 字段同义，取值 "ok" / "empty" / "too_long" / "syntax" / "unsafe_node" / "domain"
+- result: 计算表达式与值的简短文本（如 "(12+8)*3 = 60"）或错误说明
+```
+
+**结构化输出 Schema**（整段替换）：
+```json
+{
+  "type": "object",
+  "properties": {
+    "answer":    {"type": "string", "description": "给用户的自然语言结论"},
+    "tool_used": {"type": "string", "description": "calculator"},
+    "status":    {"type": "string", "description": "ok/empty/too_long/syntax/unsafe_node/domain"},
+    "result":    {"type": "string", "description": "计算表达式和值，或错误说明"}
+  },
+  "required": ["answer", "tool_used", "status", "result"]
+}
+```
+
+### 10.4 修正 汇总回答_CC（check_commit 分支）
+
+**模型**：qwen3（`provider: langgenius/ollama/ollama`，`temperature: 0.7`）
+
+**User 消息内容**：
+```
+用户问题：{{#用户输入.query#}}
+
+校验状态：{{#check_commit.valid#}}
+错误列表：{{#check_commit.errors#}}
+自然语言总结：{{#check_commit.summary#}}
+解析摘要：{{#check_commit.parsed_summary#}}
+```
+
+**System Prompt**：
+```
+你把 check_commit 工具的结构化输出和用户原始问题翻译成自然语言结论，输出必须严格符合结构化 schema，不输出任何额外文字或 Markdown 代码块。
+
+字段含义：
+- answer: 给用户的最终结论（通过 / 失败原因摘要），不要超过 200 字
+- tool_used: 固定填 "check_commit"
+- status: 与 check_commit 的 valid 字段同义，取值 "valid" / "invalid"
+- errors: 数组，原样透传 check_commit 的 errors 字段；通过时传空数组 []
+- parsed_summary: 原样透传 check_commit 的 parsed_summary 字段
+```
+
+**结构化输出 Schema**：
+```json
+{
+  "type": "object",
+  "properties": {
+    "answer":         {"type": "string", "description": "给用户的自然语言结论"},
+    "tool_used":      {"type": "string", "description": "check_commit"},
+    "status":         {"type": "string", "description": "valid/invalid"},
+    "errors":         {"type": "array", "items": {"type": "string"}, "description": "错误列表；通过时为空数组"},
+    "parsed_summary": {"type": "string", "description": "parsed 信息扁平化字符串"}
+  },
+  "required": ["answer", "tool_used", "status", "errors", "parsed_summary"]
+}
+```
+
+### 10.5 修正 汇总回答_KB（read_file / 知识检索分支）
+
+**模型**：deepseek-v4-flash（`provider: langgenius/deepseek`，`temperature: 0.7`）
+
+> 模型说明：原 DSL 用 deepseek-v4-flash，本地环境下对结构化输出不如 deepseek-v4-pro 稳定。若修正 Schema 后仍出现「复读 Schema」现象，可换为 deepseek-v4-pro（步骤：节点面板 → 模型下拉 → 选 deepseek-v4-pro → 保存）。该变更不影响其他节点。（2026-08-14 实测中该节点以 qwen3 运行、结构化输出亦稳定，也可作为备选模型。）
+
+**上下文（Context）配置**：切到「上下文」标签 → 点 **+ 添加上下文** → 选 **知识检索 / result**。这一步必须保留，否则模型没有 KB 内容可读。
+
+**知识检索节点参数（联调调优，2026-08-14 实测）**：打开画布里的「知识检索」节点 → 检索设置：
+- **Top K：10–15**（默认偏小会只回 1 个片段，导致答案单薄、列不出文中多处内容）
+- **Score 阈值：0.3**（本地 Embedding 对人名/短 query 相似度偏低，0.45 会把多数相关片段滤掉；不要低于 0.2 以免混入无关段落）
+- **检索模式：向量 + 全文**（对人名、专有名词比纯向量更稳）
+> 仅调这些参数不触发「复读 Schema」，但改完仍需重新发布工作流。
+
+**User 消息内容**：
+```
+用户问题：{{#用户输入.query#}}
+```
+
+**System Prompt**：
+```
+你把知识检索结果和用户问题整合成自然语言结论，输出必须严格符合结构化 schema，不输出任何额外文字或 Markdown 代码块。
+
+判断知识检索上下文（即上方「上下文」里的 result 片段）再决定 answer：
+- 若 result 片段数组为空（完全没有召回任何内容）→ answer 明确写"知识库未检索到相关内容"，并提示用户换关键词，sources 传空数组 []。
+- 若 result 有片段（哪怕只有一句、信息不完整）→ 直接基于这些片段作答，把片段里与问题相关的内容如实组织成结论，sources 列出实际引用到的片段标题；不要判"未检索到"，也不要凭空编造片段里没有的信息。
+
+字段含义：
+- answer: 基于知识检索上下文的自然语言结论；有片段就返回片段内容，绝不臆造。
+- tool_used: 固定填 "knowledge_retrieval"
+- sources: 数组，列出实际引用到的片段标题或来源；无任何引用时传空数组 []
+```
+
+**结构化输出 Schema**：
+```json
+{
+  "type": "object",
+  "properties": {
+    "answer":    {"type": "string", "description": "基于知识检索上下文的自然语言结论"},
+    "tool_used": {"type": "string", "description": "knowledge_retrieval"},
+    "sources":   {"type": "array", "items": {"type": "string"}, "description": "引用到的片段标题或路径列表；无引用时为空数组"}
+  },
+  "required": ["answer", "tool_used", "sources"]
+}
+```
+
+### 10.6 修正 汇总回答_CHAT（chat 兜底分支）
+
+**模型**：deepseek-v4-flash（`provider: langgenius/deepseek`，`temperature: 0.7`）
+
+> 模型说明：同 §10.5，若修正 Schema 后仍复读，可换 deepseek-v4-pro。
+
+**User 消息内容**：
+```
+用户问题：{{#用户输入.query#}}
+
+原始问题备份：{{#意图分类.structured_output.question#}}
+```
+
+**System Prompt**：
+```
+你是日常对话助手，根据用户原始问题给出自然语言回复。输出必须严格符合结构化 schema，不输出任何额外文字或 Markdown 代码块。
+
+字段含义：
+- answer: 对用户问题的直接、友好的自然语言回答（不超过 500 字）
+- tool_used: 固定填 "chat"
+```
+
+**结构化输出 Schema**：
+```json
+{
+  "type": "object",
+  "properties": {
+    "answer":    {"type": "string", "description": "对用户问题的自然语言回答"},
+    "tool_used": {"type": "string", "description": "chat"}
+  },
+  "required": ["answer", "tool_used"]
+}
+```
+
+### 10.7 知识库补充（可选，仅在希望 kb 分支能查项目资料时执行）
+
+当前 kb 分支绑定的知识库只有《围城》。若希望它能查项目内文档（如 `docs/`、`src/` 的内容）：
+
+1. 把项目文档整理为 `.txt` / `.md` 单文件或多文件（建议每个文件 ≤15 MB，超出 Dify 限制）。
+2. **Studio** → 左侧 **知识库** → 找到 Day 17 用到的知识库（创建时取的名字，如 `dev-training`） → **添加文档** → 上传文件。
+3. 索引模式选 **高质量（High Quality）**（需 Embedding 模型）。等待嵌入完成后保存。
+4. **回到工作流** → 打开 `知识检索` 节点 → 已绑定的知识库会自动包含新文档（无需重新配置节点）。
+5. 重新发布后跑 kb 分支验证（见 §10.8）。
+
+> 若 kb 分支仍然回答不了项目相关问题，最大可能是 Embedding 模型对中文/英文/技术词汇的检索精度不够——可考虑切换 Embedding 模型（`provider` 设置），或在原始 query 上做关键词归一化（这一步在 `意图分类` 节点的 `query` 字段调优）。
+
+### 10.8 重新发布与四分支回归验证
+
+> 以下命令在 Git Bash 环境运行；普通 cmd 把 `cat >` 换成记事本建文件，`curl` 命令相同。
+
+**步骤 A：导出新 DSL 并覆盖仓库存档**
+
+工作流画布 → 应用名旁下拉菜单（或右上角 **··· 更多操作**） → **导出 DSL** → YAML。下载到的文件覆盖到仓库：
+```bash
+cp "C:/Users/Xsz/Downloads/文件/DevAssistantAgent_Dify.yml" \
+   /d/workspace/py_ai/week01_ai_basics/dify_workflows/DevAssistantAgent_Dify.yml
+```
+
+**步骤 B：在画布点「发布」→「发布更新」**（API 调用的是已发布版本，未发布则新配置不生效）。
+
+**步骤 C：建请求文件 + 跑四分支回归**
+
+```bash
+# Git Bash
+mkdir -p /d/workspace/py_ai/week01_ai_basics/req_d17
+cat > /d/workspace/py_ai/week01_ai_basics/req_d17/calc.json     <<'EOF'
+{"query": "算一下 (12+8)*3"}
+EOF
+cat > /d/workspace/py_ai/week01_ai_basics/req_d17/cc.json       <<'EOF'
+{"query": "检查提交信息：func: app: Add login page"}
+EOF
+cat > /d/workspace/py_ai/week01_ai_basics/req_d17/kb.json       <<'EOF'
+{"query": "《围城》这本书的作者是谁？讲的是什么？"}
+EOF
+cat > /d/workspace/py_ai/week01_ai_basics/req_d17/chat.json     <<'EOF'
+{"query": "你好，介绍一下这个项目"}
+EOF
+
+# 确认 .env 的 DIFY_API_KEY 指向 Day 17 工作流的 app-xxx Key
+# 启动（或重启）FastAPI
+export PATH="/c/Users/Xsz/.local/bin:$PATH"
+cd /d/workspace/py_ai/week01_ai_basics
+uv run fastapi dev src/main.py   # 看到 Uvicorn running on http://127.0.0.1:8000 即成功
+
+# 另一终端：跑四个用例
+for f in calc cc kb chat; do
+  echo "=== $f ==="
+  curl -s -X POST http://127.0.0.1:8000/dify/run \
+    -H "Content-Type: application/json" \
+    -d @req_d17/$f.json
+  echo
+done
+```
+
+**步骤 D：验收清单**
+
+| 分支 | 期望 `outputs` 字段 | 不应再出现 |
+|---|---|---|
+| calc | `text_calc.answer` / `result` / `status` / `tool_used` 都是**字符串**，如 `"answer": "60"` | `{"type":"...", "description":"..."}` 嵌套对象 |
+| cc | `text_cc.answer` 字符串、`status`=`"valid"`、`errors`=`[]`、`parsed_summary` 字符串 | 同上 |
+| kb | `text_kb.answer` 是一段**含作者+情节**的自然语言、`sources` 是引用片段数组 | 元 Schema 原样输出 |
+| chat | `text_chat.answer` 是对问候的自然语言回复 | 同上 |
+
+**步骤 E：清理临时文件**（可选）
+
+```bash
+rm -rf /d/workspace/py_ai/week01_ai_basics/req_d17
+```
+或保留作为日后再跑的样例（**注意不要 `git add` 进仓库**——可在 `req_d17/` 下放一个 `.gitignore` 含 `*.json`）。
+
+### 10.9 修正后与设计文档 §8 的对照
+
+| 节点 | §8 设计的干净 Schema | 本节 §10 修正后的 Schema | 一致？ |
+|---|---|---|---|
+| 汇总回答_CALC | `{answer, tool_used, status, result}` 全 string | §10.3 同 | ✅ |
+| 汇总回答_CC | `{answer, tool_used, status, errors:array[string], parsed_summary}` | §10.4 同 | ✅ |
+| 汇总回答_KB | `{answer, tool_used, sources:array[string]}` | §10.5 同 | ✅ |
+| 汇总回答_CHAT | `{answer, tool_used}` | §10.6 同 | ✅ |
+
+修正后所有汇总节点的结构化输出 Schema 与 §8 设计完全一致。**未修正前的已发布版本与 §8 设计不一致**，是 2026-08-14 联调时 API 返回结构异常的根因。
+
+### 10.10 四分支联调实测状态（2026-08-14 本机）
+
+按 §10.8 流程发布后，用 `POST /dify/run` 跑四分支回归，结果：
+
+| 分支 | 状态 | 实测结论 |
+|---|---|---|
+| calc | ✅ 通过 | `text_calc = {status:"ok", answer:"60", result:"(12+8)*3 = 60", tool_used:"calculator"}`，4 字段全为 string，无元 Schema 嵌套；数学正确 |
+| cc | ✅ 通过 | `text_cc = {status:"valid", answer:中文结论, tool_used:"check_commit", errors:[], parsed_summary:"type=func, scope=app, ..."}`，5 字段全为 string/array[string] |
+| kb | ✅ 通过（调参后） | 作者问「《围城》作者是谁？」返回钱锺书+情节+sources；「查找苏小姐」返回真实片段+sources（未再判"未检索到"）。Schema 干净；需 §10.5 的 Top K 10–15 + Score 0.3 + 向量+全文 才召回多片段 |
+| chat | ⏳ 待回归 | 通道此前已通（误输入用例验证过），但 §10.6 配置未单独以标准闲聊用例回归 |
+
+结论：4 个汇总节点的元 Schema 问题已全部修正并验证（calc / cc / kb 三分支通过）；chat 分支配置同 §10.6、通道已证实可用，仅缺一次标准用例回归。kb 分支「答案单薄」的表现瓶颈已通过检索参数调优（Top K / Score / 检索模式）解决，非 Schema / 配置问题。
 
