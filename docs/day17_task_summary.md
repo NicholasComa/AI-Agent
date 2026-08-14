@@ -3,7 +3,7 @@
 > 适用项目：南宁软件组 AI Agent 12 周 Roadmap · Week 4（Dify Workflow）· Day 17
 > 适用仓库：`D:\workspace\py_ai\week01_ai_basics\`
 > 落档日期：2026-08-12
-> 关联文档：`docs/day17_dify_repro_design.md`、`dify_workflows/dev_assistant_agent.yml`
+> 关联文档：`docs/day17_dify_repro_design.md`、`dify_workflows/DevAssistantAgent_Dify.yml`
 
 ---
 
@@ -41,7 +41,7 @@
 - CHECK_COMMIT 代码节点（1:1 移植 `check_commit_message.py`）：![CHECK_COMMIT 代码节点](./poho/week4/dify_check_commit.png)
 - 知识检索节点（替代 `read_text_file`）：![知识检索节点](./poho/week4/dify_kb.png)
 
-3. **导出 DSL** 并归档至 `dify_workflows/dev_assistant_agent.yml`（33838 字节）。
+3. **导出 DSL** 并归档至 `dify_workflows/DevAssistantAgent_Dify.yml`（33838 字节）。
 4. **本地运行验证四分支**，针对发现的路由与输出缺陷进行修正（详见第 6 节）。
 5. **同步收紧 Week 3 源码规则**：将 `src/devagent/tools/check_commit_message.py` 改为仅接受 `type(scope): subject` 与 `type: scope: subject` 两种格式、scope 必填、**去掉 `!` breaking 标记**，并同步更新 `tests/test_devagent_tools.py` 断言（`func(app)!:`、`feat!:`、`fix: typo` 等现判 INVALID）。
 
@@ -62,7 +62,7 @@
 | 交付物 | 说明 | 状态 |
 | --- | --- | --- |
 | `docs/day17_dify_repro_design.md` | Day 17 设计文档（含工具→节点映射、12 步 SOP、代码节点 Python、实测问题表） | ✅ |
-| `dify_workflows/dev_assistant_agent.yml` | 导出的工作流 DSL（YAML，33838 字节） | ✅ |
+| `dify_workflows/DevAssistantAgent_Dify.yml` | 导出的工作流 DSL（YAML，33838 字节） | ✅ |
 | 本地已发布工作流 `DevAssistantAgent_Dify` | 运行于 `http://localhost/v1` | ✅ |
 | `src/devagent/tools/check_commit_message.py` | 去 `!` breaking、仅两种格式、scope 必填 | ✅ |
 | `tests/test_devagent_tools.py` | 同步更新 check_commit 断言 | ✅ |
@@ -151,13 +151,13 @@
 
 - **远程 Dify 未维护**：Cloud 额度耗尽，本日仅本地验证；远程工作流与本地若存在差异需另验。
 - **知识库实际语料缺失**：仓库 `training_data/` 目录不存在、无现成语料，read_file 分支的检索内容由使用者自备文档决定，仅验证工作流跑通。
-- **Day 18 联调未做**：FastAPI 包装 Dify API 的代码逻辑已就绪，但本地 FastAPI + 真实 Dify 的四分支联合跑通待执行。
+- **FastAPI 包装 Dify API 的本地联调待执行**：代码逻辑已就绪（`POST /dify/run` 为通用透传接口），本地 FastAPI + 真实 Dify 的联合跑通见 `day19_dify_api_wrapper_design.md`（当前以工作流 DevAssistantAgent_Dify 四分支为例）。
 
 ---
 
 ## 8. 次日（Day 18）计划安排
 
-Day 18 对应 Roadmap 第 4 周阶段任务第 3 条——**通过 Dify API 调用已发布工作流，并由 FastAPI 包装成统一接口**：
+Day 19 对应 Roadmap 第 4 周阶段任务第 3 条——**通过 Dify API 调用已发布工作流，并由 FastAPI 包装成统一接口**（通用接口，当前以工作流 DevAssistantAgent_Dify 为例）：
 
 1. 新增异步客户端 `src/dify_client.py`（`DifyWorkflowClient.run(query)` 返回精简结果 dataclass）；
 2. 在 `src/api_models.py` 新增 `DifyRunRequest` / `DifyRunResponse`，在 `src/app.py` 新增 `POST /dify/run` 端点；
@@ -179,4 +179,4 @@ Day 18 对应 Roadmap 第 4 周阶段任务第 3 条——**通过 Dify API 调�
 | 知识检索替代 | 替代 `read_text_file`，失路径沙箱 | `知识检索` 节点 + 知识库（步骤 7 / 设计文档 6） |
 | 分支变量隔离 | 各分支输出互不可见，须拆独立汇总 LLM | 4 个 `汇总回答_*` LLM（步骤 8） |
 | 变量聚合输出 | END 收口四分支 structured_output | `结束` 节点（步骤 9） |
-| DSL 归档 | 工作流可移植/分享 | `dify_workflows/dev_assistant_agent.yml` |
+| DSL 归档 | 工作流可移植/分享 | `dify_workflows/DevAssistantAgent_Dify.yml` |

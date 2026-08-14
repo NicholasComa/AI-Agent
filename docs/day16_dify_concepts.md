@@ -262,7 +262,7 @@ uv run python scripts/call_dify_workflow.py
 - `read_text_file` → 知识库节点（替代，Dify Cloud 不能读本地文件）
 - `check_commit_message` → Code 节点（Python）
 
-并导出 DSL 到 `dify_workflows/dev_assistant_agent.yml`，记录映射与局限到 `docs/day17_dify_mapping.md`。
+并导出 DSL 到 `dify_workflows/DevAssistantAgent_Dify.yml`，记录映射与局限到 `docs/day17_dify_mapping.md`。
 
 ---
 

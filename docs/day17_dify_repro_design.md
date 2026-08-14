@@ -412,7 +412,7 @@ graph TB
 1. **API Key**：在应用内点 **访问 API**（或右上角设置 → API 访问）→ **创建密钥**，复制形如 `app-xxxx` 的**工作流级**密钥（作用域仅此应用）。
 2. **导出 DSL**：在应用编辑界面，通过应用名旁的下拉菜单或右上角 **··· 更多操作** 找到 **导出 DSL**，选择 **YAML** 格式下载。
    - 本地部署默认下载路径示例：`C:/Users/Xsz/Downloads/文件/DevAssistantAgent_Dify .yml`
-   - 手动复制到仓库：`dify_workflows/dev_assistant_agent.yml`（Day 17 交付物）。
+   - 手动复制到仓库：`dify_workflows/DevAssistantAgent_Dify.yml`（Day 17 交付物）。
    - 注：quick-start 教程未演示 DSL 导出，此步骤以 Dify 实际界面为准（部分版本入口在「设置 → 导出」）。
 
 ---
@@ -625,7 +625,7 @@ def main(message: str) -> dict:
 
 - 本设计文档 `docs/day17_dify_repro_design.md`
 - 本地 Dify 中已发布的工作流 `DevAssistantAgent_Dify`（`http://localhost/v1`）
-- 导出的 DSL：`dify_workflows/dev_assistant_agent.yml`
+- 导出的 DSL：`dify_workflows/DevAssistantAgent_Dify.yml`
 
 ## 9. 附录：备选方案（用 Agent 应用模式，更快但略偏离交付物）
 

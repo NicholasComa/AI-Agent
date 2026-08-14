@@ -1,0 +1,1013 @@
+app:
+  description: ''
+  icon: 🤖
+  icon_background: '#FFEAD5'
+  icon_type: emoji
+  mode: workflow
+  name: DevAssistantAgent_Dify
+  use_icon_as_answer_icon: false
+dependencies:
+- current_identifier: null
+  type: marketplace
+  value:
+    marketplace_plugin_unique_identifier: langgenius/ollama:1.0.0@86dd6101fbd9de94e6681782700fa98c8a785c982918e6fe0ec21d507e15ba3f
+    version: null
+- current_identifier: null
+  type: marketplace
+  value:
+    marketplace_plugin_unique_identifier: langgenius/deepseek:0.0.19@1aa3c64e2f50179afe8410ad79412dab92bf5919a27da8e2b13071b5e5f8ce81
+    version: null
+kind: app
+version: 0.7.0
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    file_upload:
+      allowed_file_extensions:
+      - .JPG
+      - .JPEG
+      - .PNG
+      - .GIF
+      - .WEBP
+      - .SVG
+      allowed_file_types:
+      - image
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      enabled: false
+      fileUploadConfig:
+        attachment_image_file_size_limit: 2
+        audio_file_size_limit: 50
+        batch_count_limit: 5
+        file_size_limit: 15
+        file_upload_limit: 50
+        image_file_batch_limit: 10
+        image_file_size_limit: 10
+        knowledge_file_size_limit: 15
+        single_chunk_attachment_limit: 10
+        video_file_size_limit: 100
+        workflow_file_upload_limit: 10
+      image:
+        enabled: false
+        number_limits: 3
+        transfer_methods:
+        - local_file
+        - remote_url
+      number_limits: 3
+    opening_statement: ''
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      language: ''
+      voice: ''
+  graph:
+    edges:
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: start
+        targetType: llm
+      id: 1786419657963--1786419847980-target
+      selected: false
+      source: '1786419657963'
+      sourceHandle: source
+      target: '1786419847980'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: llm
+        targetType: if-else
+      id: 1786419847980--1786427170918-target
+      selected: false
+      source: '1786419847980'
+      sourceHandle: source
+      target: '1786427170918'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: if-else
+        targetType: knowledge-retrieval
+      id: 1786427170918-9bbe6bf4-3666-4585-8d74-4fe3137c0abb-1786428348639-target
+      selected: false
+      source: '1786427170918'
+      sourceHandle: 9bbe6bf4-3666-4585-8d74-4fe3137c0abb
+      target: '1786428348639'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: if-else
+        targetType: code
+      id: 1786427170918-f17390fc-dfaa-451b-809e-2530297d2f8a-1786428168314-target
+      selected: false
+      source: '1786427170918'
+      sourceHandle: f17390fc-dfaa-451b-809e-2530297d2f8a
+      target: '1786428168314'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: if-else
+        targetType: llm
+      id: 1786427170918-false-1786515004813-target
+      selected: false
+      source: '1786427170918'
+      sourceHandle: 'false'
+      target: '1786515004813'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: if-else
+        targetType: code
+      id: 1786427170918-true-1786427889010-target
+      selected: false
+      source: '1786427170918'
+      sourceHandle: 'true'
+      target: '1786427889010'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: llm
+      id: 1786427889010-source-1786514989988-target
+      selected: false
+      source: '1786427889010'
+      sourceHandle: source
+      target: '1786514989988'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: llm
+      id: 1786428168314-source-1786514993397-target
+      selected: false
+      source: '1786428168314'
+      sourceHandle: source
+      target: '1786514993397'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: knowledge-retrieval
+        targetType: llm
+      id: 1786428348639-source-1786514999071-target
+      selected: false
+      source: '1786428348639'
+      sourceHandle: source
+      target: '1786514999071'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: llm
+        targetType: end
+      id: 1786514989988-source-1786437014042-target
+      source: '1786514989988'
+      sourceHandle: source
+      target: '1786437014042'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: llm
+        targetType: end
+      id: 1786514993397-source-1786437014042-target
+      source: '1786514993397'
+      sourceHandle: source
+      target: '1786437014042'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: llm
+        targetType: end
+      id: 1786514999071-source-1786437014042-target
+      source: '1786514999071'
+      sourceHandle: source
+      target: '1786437014042'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: llm
+        targetType: end
+      id: 1786515004813-source-1786437014042-target
+      source: '1786515004813'
+      sourceHandle: source
+      target: '1786437014042'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    nodes:
+    - data:
+        selected: false
+        title: 用户输入
+        type: start
+        variables:
+        - default: ''
+          hint: ''
+          label: 用户请求
+          max_length: 256
+          options: []
+          placeholder: ''
+          required: true
+          type: paragraph
+          variable: query
+      height: 109
+      id: '1786419657963'
+      position:
+        x: 156.32503319367322
+        y: 106.4524236545515
+      positionAbsolute:
+        x: 156.32503319367322
+        y: 106.4524236545515
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            temperature: 0.7
+          mode: chat
+          name: deepseek-v4-flash
+          provider: langgenius/deepseek/deepseek
+        prompt_template:
+        - id: 3d519bc3-85d7-49a9-a07f-b14d385cc503
+          role: system
+          text: "你是意图分类器。根据用户请求判断应调用哪个工具并抽取参数。只输出严格 JSON，不要任何解释或 Markdown 代码块。\n\n\
+            字段说明：\n tool: \"calculator\" | \"check_commit\" | \"read_file\" | \"chat\"\
+            \n expression: 算术表达式字符串（仅 calculator 时填）\n message: 完整 commit message（仅\
+            \ check_commit 时填）\n query: 检索关键词/问题原文（仅 read_file 时填）\n question: 原始问题（仅\
+            \ chat 时填）\n\n路由规则（严格按优先级）：\n 1. 含算术表达式或\"算/计算/求值\"            → calculator\n\
+            \ 2. 含\"提交信息/commit message/校验/检查提交\" → check_commit\n 3. 用户想了解某份资料、文档、知识库、小说/项目计划等内容\n\
+            \    → read_file（即使用户问的是常识，只要属于知识库覆盖主题也必须检索，\n      严禁凭记忆直接回答）\n 4. 仅闲聊、问候、开放式创作/意见且明确无需查资料\
+            \ → chat\n\n规则：tool 必须小写无空格；read_file 时把用户原问题整体放入 query。\n示例：\n {\"tool\"\
+            :\"read_file\",\"expression\":\"\",\"message\":\"\",\"query\":\"小说围城的主角名字叫什么\"\
+            ,\"question\":\"\"}\n {\"tool\":\"calculator\",\"expression\":\"(12+8)*3\"\
+            ,\"message\":\"\",\"query\":\"\",\"question\":\"\"}"
+        - id: 8ca158e2-adcb-4e1b-9a82-77abccbba3cd
+          role: user
+          text: 'Query: {{#1786419657963.query#}}'
+        selected: false
+        structured_output:
+          schema:
+            additionalProperties: false
+            properties:
+              expression:
+                type: string
+              message:
+                type: string
+              query:
+                type: string
+              question:
+                type: string
+              tool:
+                type: string
+            required:
+            - tool
+            - expression
+            - message
+            - query
+            - question
+            type: object
+        structured_output_enabled: true
+        title: 意图分类
+        type: llm
+        vision:
+          enabled: false
+      height: 88
+      id: '1786419847980'
+      position:
+        x: 203.3994223268046
+        y: 282
+      positionAbsolute:
+        x: 203.3994223268046
+        y: 282
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - comparison_operator: is
+            id: 1902dd34-2ed6-4e0f-aade-e490af636b9d
+            value: calculator
+            varType: object
+            variable_selector:
+            - '1786419847980'
+            - structured_output
+            - tool
+          id: 'true'
+          logical_operator: and
+        - case_id: f17390fc-dfaa-451b-809e-2530297d2f8a
+          conditions:
+          - comparison_operator: is
+            id: 34c04768-cb13-4b87-b39e-8566f1e1162b
+            value: check_commit
+            varType: object
+            variable_selector:
+            - '1786419847980'
+            - structured_output
+            - tool
+          id: f17390fc-dfaa-451b-809e-2530297d2f8a
+          logical_operator: and
+        - case_id: 9bbe6bf4-3666-4585-8d74-4fe3137c0abb
+          conditions:
+          - comparison_operator: is
+            id: ce5c9730-7a52-44b6-86d4-1db57f73f593
+            value: read_file
+            varType: string
+            variable_selector:
+            - '1786419847980'
+            - structured_output
+            - tool
+          id: 9bbe6bf4-3666-4585-8d74-4fe3137c0abb
+          logical_operator: and
+        selected: false
+        title: 条件分支
+        type: if-else
+      height: 292
+      id: '1786427170918'
+      position:
+        x: 491.66091635194334
+        y: 282
+      positionAbsolute:
+        x: 491.66091635194334
+        y: 282
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        code: "import ast\nimport math\nimport operator\n\n_MAX_LEN = 512\n_ALLOWED_OPS\
+          \ = {\n    ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,\n\
+          \    ast.Div: operator.truediv, ast.Mod: operator.mod,\n    ast.USub: operator.neg,\
+          \ ast.UAdd: operator.pos,\n}\n_ALLOWED_NODES = (\n    ast.Expression, ast.BinOp,\
+          \ ast.UnaryOp, ast.Constant,\n    ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Mod,\
+          \ ast.USub, ast.UAdd,\n)\n\ndef _result(value, error, kind, summary):\n\
+          \    return {\"value\": value, \"error\": error, \"kind\": kind, \"summary\"\
+          : summary}\n\ndef _eval_node(node):\n    if isinstance(node, ast.Expression):\n\
+          \        return _eval_node(node.body)\n    if isinstance(node, ast.BinOp):\n\
+          \        left = _eval_node(node.left); right = _eval_node(node.right)\n\
+          \        op = _ALLOWED_OPS.get(type(node.op))\n        if op is None:\n\
+          \            raise ValueError(f\"unsupported operator: {type(node.op).__name__}\"\
+          )\n        return op(left, right)\n    if isinstance(node, ast.UnaryOp):\n\
+          \        operand = _eval_node(node.operand)\n        op = _ALLOWED_OPS.get(type(node.op))\n\
+          \        if op is None:\n            raise ValueError(f\"unsupported unary\
+          \ op: {type(node.op).__name__}\")\n        return op(operand)\n    if isinstance(node,\
+          \ ast.Constant):\n        if isinstance(node.value, bool):\n           \
+          \ raise ValueError(\"booleans are not allowed\")\n        if not isinstance(node.value,\
+          \ (int, float)):\n            raise ValueError(f\"non-numeric literal: {type(node.value).__name__}\"\
+          )\n        return node.value\n    raise ValueError(f\"disallowed node: {type(node).__name__}\"\
+          )\n\ndef main(expression: str) -> dict:\n    if not isinstance(expression,\
+          \ str) or not expression.strip():\n        return _result(None, \"expression\
+          \ is empty\", \"empty\",\n                        \"✗ 计算失败：expression is\
+          \ empty（kind=empty）\")\n    if len(expression) > _MAX_LEN:\n        return\
+          \ _result(None, f\"expression exceeds {_MAX_LEN} chars\", \"too_long\",\n\
+          \                        f\"✗ 计算失败：expression exceeds {_MAX_LEN} chars（kind=too_long）\"\
+          )\n    try:\n        tree = ast.parse(expression, mode=\"eval\")\n    except\
+          \ SyntaxError as exc:\n        return _result(None, f\"invalid syntax: {exc.msg}\"\
+          , \"syntax\",\n                        f\"✗ 计算失败：invalid syntax: {exc.msg}（kind=syntax）\"\
+          )\n    for node in ast.walk(tree):\n        if not isinstance(node, _ALLOWED_NODES):\n\
+          \            return _result(None, f\"unsupported syntax: {type(node).__name__}\"\
+          , \"unsafe_node\",\n                            f\"✗ 计算失败：unsupported syntax:\
+          \ {type(node).__name__}（kind=unsafe_node）\")\n    try:\n        value =\
+          \ _eval_node(tree)\n    except ZeroDivisionError:\n        return _result(None,\
+          \ \"division by zero\", \"domain\",\n                        \"✗ 计算失败：division\
+          \ by zero（kind=domain）\")\n    except OverflowError:\n        return _result(None,\
+          \ \"numeric overflow\", \"domain\",\n                        \"✗ 计算失败：numeric\
+          \ overflow（kind=domain）\")\n    except ValueError as exc:\n        return\
+          \ _result(None, str(exc), \"unsafe_node\",\n                        f\"\
+          ✗ 计算失败：{exc}（kind=unsafe_node）\")\n    if isinstance(value, float) and not\
+          \ math.isfinite(value):\n        return _result(None, \"result is not finite\
+          \ (inf/nan)\", \"domain\",\n                        \"✗ 计算失败：result is not\
+          \ finite (inf/nan)（kind=domain）\")\n    return _result(value, \"\", \"ok\"\
+          , f\"✓ 计算成功：{expression} = {value}\")"
+        code_language: python3
+        outputs:
+          error:
+            children: null
+            type: string
+          kind:
+            children: null
+            type: string
+          summary:
+            children: null
+            type: string
+          value:
+            children: null
+            type: number
+        selected: false
+        title: calculator
+        type: code
+        variables:
+        - value_selector:
+          - '1786419847980'
+          - structured_output
+          - expression
+          value_type: object
+          variable: expression
+      height: 52
+      id: '1786427889010'
+      position:
+        x: 789.0814143603229
+        y: 309.4770119497224
+      positionAbsolute:
+        x: 789.0814143603229
+        y: 309.4770119497224
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        code: "import re\n\nALLOWED_TYPES = frozenset({\n    \"func\",\"feat\",\"\
+          fix\",\"docs\",\"style\",\"conf\",\"perm\",\"version\",\"patch\",\n    \"\
+          other\",\"refactor\",\"perf\",\"test\",\"chore\",\"build\",\"ci\",\"revert\"\
+          ,\n})\nSUBJECT_MAX = 72\nBODY_LINE_MAX = 100\n_HEADER_RE = re.compile(\n\
+          \    r\"^(?P<type>[A-Za-z]+)\"\n    r\"(?:\\((?P<pscope>[A-Za-z0-9_-]+)\\\
+          )\"\n    r\"|(?::\\s*(?P<cscope>[A-Za-z0-9_-]+)))\"\n    r\":\\s(?P<subject>.+)$\"\
+          \n)\n\ndef _parse_header(line):\n    m = _HEADER_RE.match(line)\n    if\
+          \ not m:\n        return {\"type\": None, \"scope\": None, \"subject\":\
+          \ None, \"breaking\": False}\n    scope = m.group(\"pscope\") or m.group(\"\
+          cscope\")\n    return {\n        \"type\": m.group(\"type\").lower(),\n\
+          \        \"scope\": scope,\n        \"subject\": m.group(\"subject\").strip(),\n\
+          \        \"breaking\": False,\n    }\n\ndef main(message: str) -> dict:\n\
+          \    errors = []\n    if not isinstance(message, str):\n        return {\n\
+          \            \"valid\": \"invalid\",\n            \"errors\": [\"message\
+          \ must be a string\"],\n            \"summary\": \"✗ 校验失败：message must be\
+          \ a string\",\n            \"parsed_summary\": \"type=None, scope=None,\
+          \ subject=None, breaking=False, has_body=False\",\n        }\n    if \"\\\
+          n\" in message:\n        header, _, rest = message.partition(\"\\n\")\n\
+          \    else:\n        header, rest = message, \"\"\n    header = header.rstrip(\"\
+          \\r\")\n    rest = rest.replace(\"\\r\\n\", \"\\n\")\n    parsed = _parse_header(header)\n\
+          \    has_body = bool(rest.strip())\n    if parsed[\"type\"] is None:\n \
+          \       errors.append(\"header does not match `<type>(scope): subject`\"\
+          )\n    else:\n        if parsed[\"type\"] not in ALLOWED_TYPES:\n      \
+          \      errors.append(f\"type '{parsed['type']}' not allowed\")\n    if parsed[\"\
+          subject\"] is not None and not parsed[\"subject\"].strip():\n        errors.append(\"\
+          subject is empty\")\n    if len(header) > SUBJECT_MAX:\n        errors.append(f\"\
+          header line is {len(header)} chars, max {SUBJECT_MAX}\")\n    if has_body:\n\
+          \        for i, ln in enumerate(rest.splitlines(), start=2):\n         \
+          \   if len(ln) > BODY_LINE_MAX:\n                errors.append(f\"body line\
+          \ {i} is {len(ln)} chars, max {BODY_LINE_MAX}\")\n    parsed_summary = (\n\
+          \        f\"type={parsed['type']}, scope={parsed['scope']}, \"\n       \
+          \ f\"subject={parsed['subject']}, breaking={parsed['breaking']}, has_body={has_body}\"\
+          \n    )\n    if errors:\n        summary = \"✗ 校验失败：\" + \"；\".join(errors)\n\
+          \    else:\n        summary = f\"✓ 校验通过：{header.strip()}\"\n    return {\n\
+          \        \"valid\": \"valid\" if not errors else \"invalid\",\n        \"\
+          errors\": errors,\n        \"summary\": summary,\n        \"parsed_summary\"\
+          : parsed_summary,\n    }"
+        code_language: python3
+        outputs:
+          errors:
+            children: null
+            type: array[string]
+          parsed_summary:
+            children: null
+            type: string
+          summary:
+            children: null
+            type: string
+          valid:
+            children: null
+            type: string
+        selected: false
+        title: check_commit
+        type: code
+        variables:
+        - value_selector:
+          - '1786419847980'
+          - structured_output
+          - message
+          value_type: object
+          variable: message
+      height: 52
+      id: '1786428168314'
+      position:
+        x: 789.0814143603229
+        y: 366.89399734450615
+      positionAbsolute:
+        x: 789.0814143603229
+        y: 366.89399734450615
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        dataset_ids:
+        - AvkKX2+IkzSxtCTvjjPyJG92uurku2pt+NMTOKKtbyGvA+TL49aAUK6Zvobf6ppK
+        metadata_filtering_mode: disabled
+        multiple_retrieval_config:
+          reranking_enable: true
+          reranking_mode: reranking_model
+          reranking_model:
+            model: qwen3-rerank
+            provider: langgenius/tongyi/tongyi
+          score_threshold: null
+          top_k: 4
+          weights: null
+        query_attachment_selector: []
+        query_variable_selector:
+        - '1786419847980'
+        - structured_output
+        - query
+        retrieval_mode: multiple
+        selected: false
+        title: 知识检索
+        type: knowledge-retrieval
+      height: 90
+      id: '1786428348639'
+      position:
+        x: 789.0814143603229
+        y: 430.4169853947838
+      positionAbsolute:
+        x: 789.0814143603229
+        y: 430.4169853947838
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        outputs:
+        - value_selector:
+          - '1786514989988'
+          - structured_output
+          value_type: object
+          variable: text_calc
+        - value_selector:
+          - '1786514993397'
+          - structured_output
+          value_type: object
+          variable: text_cc
+        - value_selector:
+          - '1786514999071'
+          - structured_output
+          value_type: object
+          variable: text_kb
+        - value_selector:
+          - '1786515004813'
+          - structured_output
+          value_type: object
+          variable: text_chat
+        selected: false
+        title: 输出
+        type: end
+      height: 166
+      id: '1786437014042'
+      position:
+        x: 1401.3739445431142
+        y: 453.31449535288584
+      positionAbsolute:
+        x: 1401.3739445431142
+        y: 453.31449535288584
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            temperature: 0.7
+          mode: chat
+          name: qwen3
+          provider: langgenius/ollama/ollama
+        prompt_template:
+        - id: 0dcd9fbe-ddaf-481f-894e-5a4da90cf642
+          role: system
+          text: '你把工具的结构化输出和用户原始问题翻译成自然语言结论，输出必须严格符合结构化 schema，不输出任何额外文字或 Markdown
+            代码块。
+
+
+            '
+        - id: c171d2bd-ec64-479f-b15b-d0ed23b4e3e7
+          role: user
+          text: '用户问题：{{{#1786419657963.query#}}
+
+            计算结果：{{{#1786427889010.value#}}
+
+            错误信息：{{{#1786427889010.error#}}
+
+            结果分类：{{{#1786427889010.kind#}}
+
+            自然语言总结：{{{#1786427889010.summary#}}'
+        selected: false
+        structured_output:
+          schema:
+            additionalProperties: false
+            properties:
+              answer:
+                additionalProperties: false
+                properties:
+                  description:
+                    type: string
+                  type:
+                    type: string
+                required:
+                - type
+                - description
+                type: object
+              result:
+                additionalProperties: false
+                properties:
+                  description:
+                    type: string
+                  type:
+                    type: string
+                required:
+                - type
+                - description
+                type: object
+              status:
+                additionalProperties: false
+                properties:
+                  description:
+                    type: string
+                  type:
+                    type: string
+                required:
+                - type
+                - description
+                type: object
+              tool_used:
+                additionalProperties: false
+                properties:
+                  description:
+                    type: string
+                  type:
+                    type: string
+                required:
+                - type
+                - description
+                type: object
+            required:
+            - answer
+            - tool_used
+            - status
+            - result
+            type: object
+        structured_output_enabled: true
+        title: 汇总回答_CALC
+        type: llm
+        vision:
+          enabled: false
+      height: 88
+      id: '1786514989988'
+      position:
+        x: 1088.9267425559458
+        y: 163.35494460724212
+      positionAbsolute:
+        x: 1088.9267425559458
+        y: 163.35494460724212
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            temperature: 0.7
+          mode: chat
+          name: qwen3
+          provider: langgenius/ollama/ollama
+        prompt_template:
+        - id: adf13d90-ef4a-4fea-be20-2324d0f98855
+          role: system
+          text: '你把工具的结构化输出和用户原始问题翻译成自然语言结论，输出必须严格符合结构化 schema，不输出任何额外文字或 Markdown
+            代码块。
+
+
+            '
+        - id: ec29f16d-c9c8-475b-9a17-5c3e9b096734
+          role: user
+          text: '用户问题：{{{#1786419657963.query#}}
+
+            校验状态：{{{#1786428168314.valid#}}
+
+            错误列表：{{{#1786428168314.errors#}}
+
+            自然语言总结：{{{#1786428168314.summary#}}
+
+            解析信息：{{{#1786428168314.parsed_summary#}}'
+        selected: false
+        structured_output:
+          schema:
+            additionalProperties: false
+            properties:
+              answer:
+                additionalProperties: false
+                properties:
+                  description:
+                    type: string
+                  type:
+                    type: string
+                required:
+                - type
+                - description
+                type: object
+              errors:
+                additionalProperties: false
+                properties:
+                  description:
+                    type: string
+                  type:
+                    type: string
+                required:
+                - type
+                - description
+                type: object
+              parsed_summary:
+                additionalProperties: false
+                properties:
+                  description:
+                    type: string
+                  type:
+                    type: string
+                required:
+                - type
+                - description
+                type: object
+              status:
+                additionalProperties: false
+                properties:
+                  description:
+                    type: string
+                  type:
+                    type: string
+                required:
+                - type
+                - description
+                type: object
+              tool_used:
+                additionalProperties: false
+                properties:
+                  description:
+                    type: string
+                  type:
+                    type: string
+                required:
+                - type
+                - description
+                type: object
+            required:
+            - answer
+            - tool_used
+            - status
+            - errors
+            - parsed_summary
+            type: object
+        structured_output_enabled: true
+        title: 汇总回答_CC
+        type: llm
+        vision:
+          enabled: false
+      height: 88
+      id: '1786514993397'
+      position:
+        x: 1088.9267425559458
+        y: 282
+      positionAbsolute:
+        x: 1088.9267425559458
+        y: 282
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        context:
+          enabled: true
+          variable_selector:
+          - '1786428348639'
+          - result
+        model:
+          completion_params:
+            temperature: 0.7
+          mode: chat
+          name: deepseek-v4-flash
+          provider: langgenius/deepseek/deepseek
+        prompt_config:
+          jinja2_variables: []
+        prompt_template:
+        - id: 37f87754-483b-4f8e-b6d7-3b60400d3be1
+          role: system
+          text: '请基于以下上下文回答：{{{#context#}}
+
+
+            用户问题：{{{#1786419657963.query#}}
+
+            你把工具的结构化输出和用户原始问题翻译成自然语言结论，输出必须严格符合结构化 schema，不输出任何额外文字或 Markdown 代码块。
+
+
+            '
+        - edition_type: basic
+          id: 8c51d8ad-4c10-429b-9e9b-b1bc6d576e8b
+          role: user
+          text: 原始问题：{{{#1786419657963.query#}}
+        selected: false
+        structured_output:
+          schema:
+            additionalProperties: false
+            properties:
+              answer:
+                additionalProperties: false
+                properties:
+                  description:
+                    type: string
+                  type:
+                    type: string
+                required:
+                - type
+                - description
+                type: object
+              sources:
+                additionalProperties: false
+                properties:
+                  description:
+                    type: string
+                  type:
+                    type: string
+                required:
+                - type
+                - description
+                type: object
+              tool_used:
+                additionalProperties: false
+                properties:
+                  description:
+                    type: string
+                  type:
+                    type: string
+                required:
+                - type
+                - description
+                type: object
+            required:
+            - answer
+            - tool_used
+            - sources
+            type: object
+        structured_output_enabled: true
+        title: "\t汇总回答_KB"
+        type: llm
+        vision:
+          enabled: false
+      height: 88
+      id: '1786514999071'
+      position:
+        x: 1088.9267425559458
+        y: 383.9595227619535
+      positionAbsolute:
+        x: 1088.9267425559458
+        y: 383.9595227619535
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            temperature: 0.7
+          mode: chat
+          name: deepseek-v4-flash
+          provider: langgenius/deepseek/deepseek
+        prompt_template:
+        - id: ca99d1f4-4cb3-49c6-b12f-6db92eb40886
+          role: system
+          text: '你把工具的结构化输出和用户原始问题翻译成自然语言结论，输出必须严格符合结构化 schema，不输出任何额外文字或 Markdown
+            代码块。
+
+
+            '
+        - id: 649e9fa2-8f4c-42fa-9e26-1415ca31cddc
+          role: user
+          text: '用户问题：{{{#1786419657963.query#}}
+
+            原始问题备份：{{{#1786419847980.structured_output.question#}}'
+        selected: false
+        structured_output:
+          schema:
+            additionalProperties: false
+            properties:
+              answer:
+                additionalProperties: false
+                properties:
+                  description:
+                    type: string
+                  type:
+                    type: string
+                required:
+                - type
+                - description
+                type: object
+              tool_used:
+                additionalProperties: false
+                properties:
+                  description:
+                    type: string
+                  type:
+                    type: string
+                required:
+                - type
+                - description
+                type: object
+            required:
+            - answer
+            - tool_used
+            type: object
+        structured_output_enabled: true
+        title: 汇总回答_CHAT
+        type: llm
+        vision:
+          enabled: false
+      height: 88
+      id: '1786515004813'
+      position:
+        x: 789.0814143603229
+        y: 537.9690562449169
+      positionAbsolute:
+        x: 789.0814143603229
+        y: 537.9690562449169
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 0
+    viewport:
+      x: -50.24603540003113
+      y: 155.47528222601
+      zoom: 0.7430802658275486
+  rag_pipeline_variables: []
