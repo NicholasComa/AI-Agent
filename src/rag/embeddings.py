@@ -190,7 +190,7 @@ class EmbeddingClient:
                 last_exc = exc
                 if attempt >= self._max_retries:
                     break
-                time.sleep(self._backoff * (2 ** attempt))
+                time.sleep(self._backoff * (2**attempt))
         assert last_exc is not None
         raise last_exc
 
