@@ -54,6 +54,7 @@ ignore = [
 "tests/**/*.py" = ["S101"]  # allow assert in tests
 "src/**/*.py"   = ["T201"]  # allow print in demo entrypoints
 "scripts/run_real_ollama.py" = ["E402"]  # bootstrap: must add src/ to sys.path before local imports
+"scripts/rag_week5_demo.py" = ["E402"]  # bootstrap: must add src/ to sys.path before local imports
 
 [tool.ruff.format]
 quote-style = "double"
