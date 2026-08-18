@@ -8,9 +8,11 @@ dependencies = [
     "fastapi[standard]>=0.139.2",
     "httpx>=0.28.1",
     "langchain>=1.3.14",
+    "numpy>=2.5.2",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.2",
     "python-dotenv>=1.2.2",
+    "qdrant-client>=1.19.0",
     "sse-starlette>=3.4.6",
     "uvicorn[standard]>=0.51.0",
 ]
@@ -55,6 +57,7 @@ ignore = [
 "src/**/*.py"   = ["T201"]  # allow print in demo entrypoints
 "scripts/run_real_ollama.py" = ["E402"]  # bootstrap: must add src/ to sys.path before local imports
 "scripts/rag_week5_demo.py" = ["E402"]  # bootstrap: must add src/ to sys.path before local imports
+"scripts/rag_week5_real_demo.py" = ["E402"]  # bootstrap: must add src/ to sys.path before local imports
 
 [tool.ruff.format]
 quote-style = "double"

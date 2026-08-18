@@ -64,6 +64,7 @@ from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, Settings
 Provider = Literal["openai_compatible", "ollama"]
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
 LogFormat = Literal["json", "plain"]
+QdrantMode = Literal["local", "docker"]
 
 
 class AppConfig(BaseSettings):
@@ -117,6 +118,21 @@ class AppConfig(BaseSettings):
     train_dir: str = "./training_data"
     # max_file_bytes：单文件读取上限（防止工具单次拉爆模型上下文）
     max_file_bytes: int = 50_000
+
+    # ----- Embedding 接口（Week 05 RAG）-----
+    embedding_api_base_url: str = ""  # 空 → get_embedding() 回退到 FakeEmbedding
+    embedding_model_name: str = ""
+    embedding_api_key: str = ""  # Ollama 无 key，留空即可
+    embedding_max_retries: int = 2
+    embedding_backoff_seconds: float = 0.5
+
+    # ----- Qdrant 配置（Week 05 RAG）-----
+    qdrant_mode: QdrantMode = "local"  # 进程内嵌 / 远程 Docker
+    qdrant_path: str = ":memory:"  # local 模式持久化路径，":memory:" 表示内存
+    qdrant_host: str = "localhost"  # docker 模式使用
+    qdrant_port: int = 6333
+    qdrant_collection_name: str = "rag_chunks"
+    qdrant_vector_size: int = 1024  # 必须与 Embedding 输出一致
 
     # ----- Pydantic Settings 配置 -----
     model_config = SettingsConfigDict(
