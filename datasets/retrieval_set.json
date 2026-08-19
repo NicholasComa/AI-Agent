@@ -1,0 +1,102 @@
+[
+  {
+    "query": "RAG 的全称是什么？",
+    "expected_sources": ["rag_concepts.md"],
+    "note": "事实型-术语"
+  },
+  {
+    "query": "Overlap 重叠的作用是什么？",
+    "expected_sources": ["rag_concepts.md"],
+    "note": "事实型-概念"
+  },
+  {
+    "query": "Metadata 元数据在 RAG 中有哪些用途？",
+    "expected_sources": ["rag_concepts.md"],
+    "note": "事实型-概念"
+  },
+  {
+    "query": "Qdrant 的 Point 由哪几部分组成？",
+    "expected_sources": ["qdrant_basics.md"],
+    "note": "事实型-概念"
+  },
+  {
+    "query": "Qdrant 的 Local Mode 本地模式有什么特点？",
+    "expected_sources": ["qdrant_basics.md"],
+    "note": "事实型-概念"
+  },
+  {
+    "query": "RAG 管道的五个阶段是什么？",
+    "expected_sources": ["rag_pipeline.md"],
+    "note": "事实型-流程"
+  },
+  {
+    "query": "Recall@K 指标是如何计算的？",
+    "expected_sources": ["rag_evaluation.md"],
+    "note": "事实型-评测"
+  },
+  {
+    "query": "第 5 周的通过标准是什么？",
+    "expected_sources": ["roadmap_week5.md"],
+    "note": "事实型-任务"
+  },
+  {
+    "query": "Embedding 模型常见的向量维度有哪些？",
+    "expected_sources": ["embedding_models.md"],
+    "note": "事实型-概念"
+  },
+  {
+    "query": "红豆生南国 出自哪位诗人的哪首诗？",
+    "expected_sources": ["poem_tang_相思_王维.md"],
+    "note": "诗词-唐诗"
+  },
+  {
+    "query": "秦时明月汉时关 是王昌龄的哪首诗？",
+    "expected_sources": ["poem_tang_横吹曲辞 出塞 一_王昌龄.md"],
+    "note": "诗词-唐诗"
+  },
+  {
+    "query": "我住长江头，君住长江尾 是哪位词人的作品？",
+    "expected_sources": ["poem_ci_卜算子_李之仪.md"],
+    "note": "诗词-宋词"
+  },
+  {
+    "query": "千里澄江似练，翠峰如簇 出自哪首词？",
+    "expected_sources": ["poem_ci_桂枝香_王安石.md"],
+    "note": "诗词-宋词"
+  },
+  {
+    "query": "为什么 RAG 要让检索与生成职责分离？",
+    "expected_sources": ["rag_concepts.md", "rag_pipeline.md"],
+    "note": "跨文档"
+  },
+  {
+    "query": "向量距离有哪些常用的度量方式？",
+    "expected_sources": ["rag_concepts.md", "embedding_models.md"],
+    "note": "跨文档"
+  },
+  {
+    "query": "检索结果不对时，可能问题出在哪些环节？",
+    "expected_sources": ["rag_concepts.md", "rag_evaluation.md"],
+    "note": "跨文档-错误归因"
+  },
+  {
+    "query": "文本向量化之后，检索问题变成了什么计算？",
+    "expected_sources": ["rag_concepts.md"],
+    "note": "同义改写"
+  },
+  {
+    "query": "怎么让知识库问答避免编造答案？",
+    "expected_sources": ["rag_concepts.md"],
+    "note": "同义改写-幻觉"
+  },
+  {
+    "query": "君不见黄河之水天上来 出自李白的哪首诗？",
+    "expected_sources": [],
+    "note": "知识库无此诗-无法回答"
+  },
+  {
+    "query": "2024 年巴黎奥运会开幕式的举办日期是？",
+    "expected_sources": [],
+    "note": "知识库无对应片段-无法回答"
+  }
+]

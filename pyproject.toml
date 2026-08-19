@@ -58,6 +58,7 @@ ignore = [
 "scripts/run_real_ollama.py" = ["E402"]  # bootstrap: must add src/ to sys.path before local imports
 "scripts/rag_week5_demo.py" = ["E402"]  # bootstrap: must add src/ to sys.path before local imports
 "scripts/rag_week5_real_demo.py" = ["E402"]  # bootstrap: must add src/ to sys.path before local imports
+"scripts/rag_week5_eval.py" = ["E402"]  # bootstrap: must add src/ to sys.path before local imports
 
 [tool.ruff.format]
 quote-style = "double"
