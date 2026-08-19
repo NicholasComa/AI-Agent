@@ -44,7 +44,7 @@ def main() -> int:
         return 1
 
     print("=== 1. 文档导入与切分 ===")
-    chunks = build_chunks([str(p) for p in paths], chunk_size=300, overlap=60)
+    chunks = build_chunks([str(p) for p in paths], chunk_size=500, overlap=100)
     print(f"源文件 {len(paths)} 个，切分片段 {len(chunks)} 个")
     for chunk in chunks[:5]:
         print(f"  {chunk.chunk_id}  (len={len(chunk.text)})  {chunk.text[:40]!r}")
@@ -64,7 +64,7 @@ def main() -> int:
         print(f"\nQuery: {query}")
         for r in retriever.search(query, top_k=3):
             print(f"  score={r.score:.4f}  chunk_id={r.chunk_id}  source={r.source}")
-            print(f"    text={r.text[:60]!r}")
+            print(f"    text={r.text[:100]!r}")
     return 0
 
 

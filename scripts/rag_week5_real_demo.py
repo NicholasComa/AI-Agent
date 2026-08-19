@@ -92,7 +92,7 @@ def _main() -> int:
         print(f"[error] 无法初始化 Qdrant 检索器：{exc}")
         return 1
 
-    chunks = build_chunks([str(p) for p in paths], chunk_size=300, overlap=60)
+    chunks = build_chunks([str(p) for p in paths], chunk_size=500, overlap=100)
     print(f"源文件 {len(paths)} 个，切分片段 {len(chunks)} 个")
     if len(chunks) < 30:
         print(f"[warn] 片段数 {len(chunks)} < 30，建议补充训练资料或调小 chunk_size")
@@ -116,7 +116,7 @@ def _main() -> int:
             continue
         for r in results:
             print(f"  score={r.score:.4f}  chunk_id={r.chunk_id}  source={r.source}")
-            print(f"    text={r.text[:60]!r}")
+            print(f"    text={r.text[:100]!r}")
     return 0
 
 
