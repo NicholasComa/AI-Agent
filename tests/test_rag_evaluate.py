@@ -20,7 +20,7 @@ from rag.qdrant_store import QdrantConfig
 from rag.retriever import QdrantRetriever, RetrievalResult
 
 _REPO = Path(__file__).resolve().parent.parent
-_DATASET = _REPO / "datasets" / "retrieval_set.json"
+_DATASET = _REPO / "examples" / "retrieval_set.json"
 
 
 def _result(source: str, score: float) -> RetrievalResult:

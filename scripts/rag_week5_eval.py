@@ -8,7 +8,7 @@
 流程：
 1. 载入 ``.env``，按 ``EMBEDDING_*`` / ``QDRANT_*`` 配置选择 Embedder 与 Qdrant 检索器。
 2. 把 ``data/raw`` 下的文档切分、向量化后写入 Qdrant 索引。
-3. 加载 ``datasets/retrieval_set.json``（20 条人工标注检索集）。
+3. 加载 ``examples/retrieval_set.json``（20 条人工标注检索集）。
 4. 逐条检索统计 Recall@1/3/5，未命中样本做环节归因。
 5. 生成 ``docs/week05_retrieval_eval.md`` 评测报告并打印摘要。
 
@@ -47,7 +47,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_RAW_DIR = REPO_ROOT / "data" / "raw"
-DEFAULT_DATASET = REPO_ROOT / "datasets" / "retrieval_set.json"
+DEFAULT_DATASET = REPO_ROOT / "examples" / "retrieval_set.json"
 
 
 def _parse_args() -> argparse.Namespace:

@@ -1,7 +1,7 @@
 """Recall@K 检索评测。
 
 职责：
-- 从 ``datasets/retrieval_set.json`` 加载带人工标注的评测集（
+- 从 ``examples/retrieval_set.json`` 加载带人工标注的评测集（
   query / expected_sources / note）。
 - 对每条 query 用检索器取 Top-K，统计 Recall@1 / @3 / @5；
   无答案样本（``expected_sources`` 为空）不参与 Recall，单独统计误召回。
