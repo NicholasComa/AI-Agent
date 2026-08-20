@@ -9,7 +9,9 @@
 1. 载入 ``.env``，按 ``EMBEDDING_*`` / ``QDRANT_*`` 配置选择 Embedder 与 Qdrant 检索器。
 2. 把 ``data/raw`` 下的文档切分、向量化后写入 Qdrant 索引。
 3. 加载 ``examples/retrieval_set.json``（20 条人工标注检索集）。
-4. 逐条检索统计 Recall@1/3/5，未命中样本做环节归因。
+4. 逐条检索统计 Recall@1/3/5；未命中样本打印环节归因（解析/覆盖、过滤、切分、
+   Embedding、TopK），切分归因通过注入 :class:`QdrantChunkingProbe` 用不同切分
+   参数在临时集合重建索引对照；``--show-results`` 可逐条打印查询与检索结果。
 5. 生成 ``docs/week05_retrieval_eval.md`` 评测报告并打印摘要。
 
 不调用任何 LLM；检索与评测均由本地模块完成。
@@ -22,6 +24,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 # 引导 src/ 到 sys.path，保证 `from rag.xxx import ...` 可用。
 _SRC_DIR = Path(__file__).resolve().parent.parent / "src"
@@ -40,6 +43,7 @@ from rag.evaluate import (  # noqa: E402
     write_report,
 )
 from rag.ingestion import build_chunks  # noqa: E402
+from rag.probes import QdrantChunkingProbe  # noqa: E402
 from rag.qdrant_store import get_qdrant_config  # noqa: E402
 from rag.retriever import QdrantRetriever  # noqa: E402
 
@@ -61,15 +65,24 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--offline", action="store_true", help="强制离线 FakeEmbedding（不连真实接口）"
     )
+    parser.add_argument(
+        "--verbose", action="store_true", help="打印 httpx / rag 模块 INFO 日志（默认仅 WARNING）"
+    )
+    parser.add_argument("--show-results", action="store_true", help="逐条打印查询与检索结果明细")
     return parser.parse_args()
 
 
 def _main() -> int:
     args = _parse_args()
+    if not args.verbose:
+        # 默认静音网络层与模块级 INFO 刷屏（每个 HTTP 请求一行），保留脚本 print 输出。
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+        logging.getLogger("rag").setLevel(logging.WARNING)
     if args.offline:
         os.environ["EMBEDDING_API_BASE_URL"] = ""
         os.environ["EMBEDDING_MODEL_NAME"] = ""
     top_ks = tuple(sorted({int(k) for k in args.top_ks.split(",") if k.strip()}))
+    # 将命令行传入的字符串参数 args.top_ks 解析为去重后排序的整数元组
     if not top_ks:
         print("[error] --top-ks 至少需要一个正整数 K")
         return 1
@@ -109,7 +122,16 @@ def _main() -> int:
     print("\n=== 3. 评测 Recall@K ===")
     items = load_dataset(args.dataset)
     print(f"评测集 {len(items)} 条")
-    summary, misses = evaluate(retriever, items, top_ks=top_ks)
+    details: list[dict[str, Any]] = []
+    chunking_probe = QdrantChunkingProbe(
+        embedder=emb, base_config=cfg, paths=[str(p) for p in paths]
+    )
+    try:
+        summary, misses = evaluate(
+            retriever, items, top_ks=top_ks, chunking_probe=chunking_probe, detail_out=details
+        )
+    finally:
+        chunking_probe.close()
     for k in sorted(summary.recall):
         print(f"  Recall@{k} = {summary.recall[k]:.3f}（{summary.hits[k]}/{summary.answerable}）")
     if summary.unanswerable:
@@ -118,7 +140,34 @@ def _main() -> int:
             f"（前 {max(summary.recall)} 条仍返回结果）"
         )
 
-    print("\n=== 4. 生成报告 ===")
+    miss_items = [m for m in misses if m["kind"] == "miss"]
+    print("\n=== 4. 未命中归因 ===")
+    if miss_items:
+        for m in miss_items:
+            print(f"  - {m['query']}")
+            print(f"      期望：{'、'.join(m['expected_sources'])}")
+            print(f"      归因：{m['diagnosis']}")
+    else:
+        print("  无未命中样本")
+
+    if args.show_results:
+        print("\n=== 5. 逐条检索明细 ===")
+        for d in details:
+            status = {
+                "hit": "命中",
+                "miss": "未命中",
+                "false_recall": "误召回",
+                "clean": "无答案",
+            }.get(d["kind"], str(d["kind"]))
+            expected = "、".join(d["expected_sources"]) if d["expected_sources"] else "（无答案）"
+            retrieved = " | ".join(f"{r['source']} {r['score']:.3f}" for r in d["results"])
+            print(f"  [{status}] {d['query']}")
+            print(f"      期望：{expected}")
+            print(f"      检索：{retrieved or '（无结果）'}")
+            if d.get("diagnosis"):
+                print(f"      归因：{d['diagnosis']}")
+
+    print("\n=== 6. 生成报告 ===")
     meta = {
         "embedder": type(emb).__name__,
         "model": getattr(emb, "model", "FakeEmbedding(离线)"),

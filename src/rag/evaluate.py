@@ -5,8 +5,9 @@
   query / expected_sources / note）。
 - 对每条 query 用检索器取 Top-K，统计 Recall@1 / @3 / @5；
   无答案样本（``expected_sources`` 为空）不参与 Recall，单独统计误召回。
-- 对未命中样本做环节归因（解析/覆盖、Embedding、TopK/排序），
-  对应第 5 周通过标准「能判断问题出在哪一类环节」。
+- 对未命中样本做环节归因（解析/覆盖、过滤、切分、Embedding、TopK/排序），
+  对应第 5 周通过标准「能判断问题出在哪一类环节」；切分归因依赖调用方
+  注入 :class:`ChunkingProbe`（见 :mod:`rag.probes`），评测本身不触碰外部服务。
 - 生成 Markdown 评测报告（评测集构成、Recall 统计、错误归因）。
 
 本模块不依赖外部服务：检索器由调用方注入（:class:`QdrantRetriever`
@@ -29,6 +30,10 @@ logger = logging.getLogger(__name__)
 DEFAULT_TOP_KS = (1, 3, 5)
 DEFAULT_REPORT_PATH = Path("docs/week05_retrieval_eval.md")
 
+# 过滤正确性探测的检索宽度：取足够宽以覆盖同来源全部片段，
+# 用于校验「source_filter 之后是否只返回该来源」。
+_FILTER_PROBE_K = 50
+
 
 class Retriever(Protocol):
     """评测所需的检索器接口（``search`` 签名与 :class:`QdrantRetriever` 对齐）。"""
@@ -40,6 +45,25 @@ class Retriever(Protocol):
         source_filter: str | None = None,
     ) -> list[RetrievalResult]:
         """检索 Top-K 片段；``source_filter`` 非 None 时按来源精确过滤。"""
+        ...
+
+
+class ChunkingProbe(Protocol):
+    """切分归因探测能力：用不同切分参数重建索引并检索。
+
+    由调用方注入（如 :mod:`rag.probes` 的 :class:`QdrantChunkingProbe`），
+    评测模块只依赖本协议读取结果，不直接触碰 Embedding / 向量库，
+    从而保持 :mod:`rag.evaluate` 不依赖外部服务。
+    """
+
+    def best_scores(
+        self,
+        query: str,
+        source: str,
+        *,
+        top_k: int = 5,
+    ) -> dict[str, float]:
+        """按各切分方案检索一次，返回 ``{方案描述: 该来源最高分}``。"""
         ...
 
 
@@ -106,11 +130,22 @@ def evaluate(
     retriever: Retriever,
     items: list[EvalItem],
     top_ks: tuple[int, ...] = DEFAULT_TOP_KS,
+    chunking_probe: ChunkingProbe | None = None,
+    detail_out: list[dict[str, Any]] | None = None,
 ) -> tuple[EvalSummary, list[dict[str, Any]]]:
     """对每条样本做检索并统计 Recall@K。
 
     命中规则：期望来源非空时，前 K 条结果里出现任一期望来源即算命中；
     期望来源为空（无答案样本）时不计入 Recall，只统计是否误召回。
+
+    Args:
+        retriever: 检索器（实现 :class:`Retriever` 协议）。
+        items: 评测样本列表。
+        top_ks: 参与统计的 K 值元组。
+        chunking_probe: 可选，切分归因探测；注入后可为疑似
+            「Embedding 表达不足」的未命中样本进一步区分切分参数问题。
+        detail_out: 可选，收集全部样本的检索明细（query / expected_sources /
+            results / kind，未命中附 diagnosis），供控制台展示；不传则跳过。
 
     Returns:
         (summary, misses)：``misses`` 为未命中 / 误召回样本的明细
@@ -126,8 +161,18 @@ def evaluate(
     for item in items:
         results = retriever.search(item.query, top_k=max_k)
         top_sources = [r.source for r in results]
+        if detail_out is not None:
+            detail_out.append(
+                {
+                    "query": item.query,
+                    "expected_sources": list(item.expected_sources),
+                    "results": [{"source": r.source, "score": r.score} for r in results],
+                }
+            )
         if not item.expected_sources:
             unanswerable += 1
+            if detail_out is not None:
+                detail_out[-1]["kind"] = "false_recall" if results else "clean"
             if results:
                 false_recalled += 1
                 misses.append(
@@ -147,7 +192,17 @@ def evaluate(
         for k in top_ks:
             if any(r.source in expected for r in results[:k]):
                 hits[k] += 1
-        if not any(r.source in expected for r in results[:max_k]):
+        hit = any(r.source in expected for r in results[:max_k])
+        if detail_out is not None:
+            detail_out[-1]["kind"] = "hit" if hit else "miss"
+        if not hit:
+            diagnosis = diagnose_miss(
+                retriever,
+                item.query,
+                item.expected_sources,
+                results,
+                chunking_probe=chunking_probe,
+            )
             misses.append(
                 {
                     "kind": "miss",
@@ -155,11 +210,11 @@ def evaluate(
                     "expected_sources": list(item.expected_sources),
                     "top_sources": top_sources,
                     "note": item.note,
-                    "diagnosis": diagnose_miss(
-                        retriever, item.query, item.expected_sources, results
-                    ),
+                    "diagnosis": diagnosis,
                 }
             )
+            if detail_out is not None:
+                detail_out[-1]["diagnosis"] = diagnosis
 
     recall = {k: (hits[k] / answerable if answerable else 0.0) for k in top_ks}
     summary = EvalSummary(
@@ -178,39 +233,90 @@ def diagnose_miss(
     query: str,
     expected_sources: tuple[str, ...],
     results: list[RetrievalResult],
+    chunking_probe: ChunkingProbe | None = None,
 ) -> str:
     """对未命中样本做环节归因（启发式，非精确诊断）。
 
     对每个期望来源单独按 ``source_filter`` 检索，比较其最高分与普通
     检索第 K 名的分数：
 
+    - 过滤结果包含其它来源 → 过滤逻辑错误；
     - 该来源在索引中无任何片段 → 解析 / 知识库覆盖问题；
+    - 普通检索无结果但过滤检索可命中 → 检索链路异常；
     - 最高分不低于第 K 名却被排挤出候选 → TopK / 排序问题；
-    - 最高分明显低于第 K 名 → Embedding 表达不足。
+    - 最高分明显低于第 K 名 → Embedding 表达不足；若注入
+      :class:`ChunkingProbe`，先用不同切分参数重建索引对比，能提升到
+      第 K 名水平即判为切分参数问题。
+
+    探测过程中任何异常只记录日志并跳过该来源，不阻断整体归因。
     """
     kth_score = results[-1].score if results else 0.0
+    kth_rank = len(results)
     parts: list[str] = []
     for src in expected_sources:
         try:
-            filtered = retriever.search(query, top_k=5, source_filter=src)
+            filtered = retriever.search(query, top_k=_FILTER_PROBE_K, source_filter=src)
         except TypeError:
             parts.append(f"{src}：检索器不支持来源过滤，无法定位（请用 QdrantRetriever 复跑）")
+            continue
+        except Exception as exc:
+            logger.exception("filter probe failed query=%r source=%r", query, src)
+            parts.append(f"{src}：过滤探测执行异常（{type(exc).__name__}），跳过该来源")
             continue
         if not filtered:
             parts.append(f"{src}：索引中无该来源片段（解析 / 知识库覆盖问题）")
             continue
+        wrong = {r.source for r in filtered if r.source != src}
+        if wrong:
+            parts.append(f"{src}：过滤逻辑错误（source_filter={src!r} 却返回了 {sorted(wrong)}）")
+            continue
+        if not results:
+            parts.append(f"{src}：普通检索无任何结果但过滤检索可命中（检索链路异常）")
+            continue
         best = filtered[0].score
-        if results and best >= kth_score - 1e-9:
+        if best >= kth_score - 1e-9:
             parts.append(
-                f"{src}：最高分 {best:.4f} 不低于第 {len(results)} 名 {kth_score:.4f}，"
+                f"{src}：最高分 {best:.4f} 不低于第 {kth_rank} 名 {kth_score:.4f}，"
                 "正确片段被排挤出候选（TopK / 排序问题）"
             )
         else:
             parts.append(
-                f"{src}：最高分 {best:.4f} 低于第 {len(results)} 名 {kth_score:.4f}"
-                "（Embedding 表达不足）"
+                f"{src}：最高分 {best:.4f} 低于第 {kth_rank} 名 {kth_score:.4f}，"
+                f"{_attrib_chunking_or_embedding(chunking_probe, query, src, kth_score, kth_rank)}"
             )
     return "；".join(parts)
+
+
+def _attrib_chunking_or_embedding(
+    chunking_probe: ChunkingProbe | None,
+    query: str,
+    source: str,
+    kth_score: float,
+    kth_rank: int,
+) -> str:
+    """区分「切分参数问题」与「Embedding 表达不足」。
+
+    注入 :class:`ChunkingProbe` 时，用不同切分参数重建索引并检索该来源；
+    若任一方案的最高分能达到第 K 名水平，说明调整切分参数即可改善召回，
+    判为切分参数问题；否则维持 Embedding 表达不足。探测异常只降级到
+    Embedding 归因并附注，不抛出。
+    """
+    if chunking_probe is None:
+        return "（Embedding 表达不足）"
+    try:
+        scores = chunking_probe.best_scores(query, source)
+    except Exception as exc:
+        logger.exception("chunking probe failed query=%r source=%r", query, source)
+        return f"（Embedding 表达不足；切分探测执行异常：{type(exc).__name__}）"
+    if not scores:
+        return "（Embedding 表达不足）"
+    best_name, best_score = max(scores.items(), key=lambda item: item[1])
+    if best_score >= kth_score - 1e-9:
+        return (
+            f"调整切分参数（{best_name}）后最高分 {best_score:.4f} "
+            f"达到第 {kth_rank} 名水平，判定为切分参数问题"
+        )
+    return "（Embedding 表达不足）"
 
 
 def write_report(

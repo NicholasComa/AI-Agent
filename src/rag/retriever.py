@@ -22,7 +22,7 @@ from .embeddings import Embedder
 from .ingestion import Chunk
 
 if TYPE_CHECKING:
-    from .qdrant_store import QdrantConfig
+    from .qdrant_store import QdrantClient, QdrantConfig
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +111,16 @@ class QdrantRetriever:
         self,
         embedder: Embedder,
         config: QdrantConfig,
+        client: QdrantClient | None = None,
     ) -> None:
+        """构造检索器。
+
+        Args:
+            embedder: 与集合维度一致的嵌入器。
+            config: Qdrant 连接与集合配置。
+            client: 可选，复用外部 Qdrant 客户端（例如在同一 ``:memory:``
+                实例上建立多个临时集合做对比探测）；缺省自行连接。
+        """
         # 局部 import 避免在未安装 qdrant-client 时导入失败。
         from .qdrant_store import (
             build_point,
@@ -122,7 +131,7 @@ class QdrantRetriever:
 
         self._embedder = embedder
         self._config = config
-        self._client = connect(config)
+        self._client = client if client is not None else connect(config)
         ensure_collection(self._client, config)
         self._build_point = build_point
         self._upsert = upsert_points
