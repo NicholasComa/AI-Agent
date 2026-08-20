@@ -1,13 +1,13 @@
 # AI Agent 应用开发
 
-> **第 1–3 周 · 工程基线 + 模型服务 + 单 Agent**
-> 「12 周 AI Agent 应用开发 Roadmap」前三周的落地工程。Week 1 建立可复现的工程环境与最小模型调用服务；Week 2 将其升级为**稳定、可配置、可测试**的 FastAPI 模型服务；Week 3 基于 LangChain v1 实现 DevAssistantAgent（单 Agent + Tool Calling + 中间件兜底）。
+> **第 1–5 周 · 工程基线 + 模型服务 + 单 Agent + Dify 工作流 + RAG 检索**
+> 「12 周 AI Agent 应用开发 Roadmap」前 5 周的落地工程。Week 1–3 建立可复现的工程环境与模型服务、单 Agent；Week 4 用 Dify 可视化工作流复现场景并对照代码版，由 FastAPI 统一包装；Week 5 落地 RAG 检索（解析 / 切分 / Embedding / Qdrant / Recall@K 评测），为第六周生产型 RAG 打底。
 
 ---
 
 ## 1. 项目内容
 
-本仓库是「12 周 AI Agent 应用开发 Roadmap」**第 1–3 周**的落地工程。目标是建立可复现的 Python AI 应用环境、统一的代码质量与测试基线，并交付一个生产可用的模型调用服务，为后续 10 周打好地基。
+本仓库是「12 周 AI Agent 应用开发 Roadmap」**第 1–5 周**的落地工程。目标是建立可复现的 Python AI 应用环境、统一的代码质量与测试基线，并依次交付模型服务、单 Agent、Dify 工作流对照与 RAG 检索能力，为后续 7 周打好地基。
 
 **Week 1 · 工程基线（Day 1–5，打地基）**
 
@@ -25,11 +25,35 @@
 
 基于 LangChain v1 的 `create_agent` 实现 `DevAssistantAgent`：提供 `calculator`（安全算术）、`read_text_file`（沙箱防穿越）、`check_commit_message`（commit 规范校验）三个工具；用 `AgentMiddleware` 实现 `TraceMiddleware`（三钩子记录 Agent Loop 关键节点）与 `SafeToolMiddleware`（工具异常兜底转 `TOOL_ERROR:`）；`DEFAULT_RECURSION_LIMIT=8` 防无限循环。新增 82 条测试（Agent Loop + 工具 + 中间件 + 20 条端到端用例覆盖 4 类场景），全量 188 passed。Agent 目前仅被 pytest 驱动，未接真实模型与交互界面。
 
+**Week 4 · Dify 工作流与代码版对照（Day 16–20）**
+
+用 Dify 可视化工作流理解节点 / 变量 / 分支 / 知识检索，并与代码版 Agent 对照：
+
+- **Day 17 · DevAssistantAgent_Dify**：在 Dify 复现 Week 3 场景为四分支工作流（calculator / check_commit / knowledge_retrieval / chat），导出 `dify_workflows/DevAssistantAgent_Dify.yml`。
+- **Day 18 · RequirementAnalysis_Dify**：搭建「需求文本 → 参数提取 → 分类 → 风险分析 → 结构化输出」工作流，导出 `dify_workflows/RequirementAnalysis_Dify.yml`。
+- **Day 19 · POST /dify/run**：新增 `src/dify_client.py`（`DifyWorkflowClient` 异步客户端）与 `src/api_models.py` 的 `DifyRunRequest/Response`；`src/app.py` 增加通用透传端点 `POST /dify/run`，靠 `.env` 的 `DIFY_API_KEY` 决定调用哪个工作流。
+- **Day 20 · 对比报告**：`docs/day20_dify_vs_code_report.md` 对比 Dify 版与代码版在调试、版本管理、扩展、部署上的差异。
+- 新增 6 条 Dify 相关测试（客户端 + 路由），全量 **194 passed**；本机四分支 API 联调全通过。
+
+**Week 5 · RAG 检索基础（Day 21–25）**
+
+落地最小可用的 RAG 检索（不含生成），打通「文档解析 → 切分 → Embedding → Qdrant → TopK 检索」并做 Recall@K 评测：
+
+- `src/rag/ingestion.py`：加载 `.md/.txt`、按 `chunk_size/overlap` 切分、保留 `source` 元数据。
+- `src/rag/embeddings.py`：`EmbeddingClient` / `FakeEmbedding` / `get_embedding` 工厂（真实用 `mxbai-embed-large`，离线用假向量）。
+- `src/rag/retriever.py`：`ListRetriever`（离线兜底）+ `QdrantRetriever`（主链路，返回 `chunk_id/source/score/text`，不调 LLM）。
+- `src/rag/qdrant_store.py`：`QdrantConfig` + connect / ensure_collection / upsert / search。
+- `src/rag/evaluate.py`：`load_dataset` / `evaluate` Recall@K / `diagnose_miss`（五类未命中归因）/ `write_report`。
+- 评测：`examples/retrieval_set.json`（20 条人工标注）+ `scripts/rag_week5_eval.py`，真实环境 Recall@1=0.778 / @3=0.833 / @5=0.889。
+- 新增 RAG 相关测试（`test_rag_*`、`test_qdrant_store`、`test_embedding_client`、`test_dify_*` 之外的 rag 系列），全量 **259 passed**。
+
 **最终实现**
 
 - Week 1–2：一个 FastAPI 服务，暴露 5 个端点（健康检查、对话转发、流式对话、模型清单、结构化需求分析）；统一的错误信封（`ErrorBody`）；完整的 `request_id` 链路。
 - Week 3：`DevAssistantAgent`（`src/devagent/`）—— 单 Agent + 3 工具 + 2 中间件（追踪 + 兜底）+ 82 条测试；Agent Loop 四个终止条件（直接 final / 调工具→结果→final / 异常兜底 / recursion_limit 截断）。
-- 完整的测试验证：截至 Week 3，`ruff` 通过、`pytest` **188 条全部通过**。
+- Week 4：Dify 双工作流 DSL（`dify_workflows/`）+ `POST /dify/run` 通用透传端点 + `DifyWorkflowClient`；Dify 版与代码版对照报告。
+- Week 5：`src/rag/`（ingestion / embeddings / retriever / qdrant_store / evaluate / probes）+ 离线可跑的 RAG 评测框架，Recall@K 达标、五类未命中归因闭环。
+- 完整的测试验证：截至 Week 5，`ruff` 通过、`pytest` **259 条全部通过**。
 
 ---
 
@@ -51,23 +75,32 @@ week01_ai_basics/
 │   ├── llm_client.py        # Day 3/6 Ollama 适配器（chat / chat_stream / 重试）
 │   ├── schemas.py           # Day 4 LLM 输出契约（RequirementAnalysis 等）
 │   ├── prompts.py           # Day 4 系统提示 + 消息构造
-│   ├── api_models.py        # HTTP 线协议（ChatChunk/ModelInfo/ModelsResponse/ErrorBody 等）
+│   ├── api_models.py        # HTTP 线协议（ChatChunk/ModelInfo/ModelsResponse/ErrorBody/DifyRunRequest/Response）
 │   ├── model_client.py      # Day 7 ModelClient 抽象（Protocol）
 │   ├── model_factory.py     # Day 7 工厂：配置 → 客户端实例
 │   ├── middleware.py        # Day 8 RequestId + AccessLog 中间件（纯 ASGI）
 │   ├── logging_config.py    # Day 8 JSON 日志 + request_id 链路
-│   ├── app.py               # Day 5/8/9 FastAPI 应用工厂 + 5 端点 + 异常映射
+│   ├── app.py               # Day 5/8/9 FastAPI 应用工厂 + 6 端点（含 POST /dify/run）+ 异常映射
 │   ├── main.py              # Day 5 FastAPI 服务入口（fastapi dev/run 目标）
-│   └── devagent/            # Week 3 DevAssistantAgent（单 Agent + Tool Calling）
+│   ├── dify_client.py       # Week 4 DifyWorkflowClient 异步客户端（blocking 调用封装）
+│   ├── devagent/            # Week 3 DevAssistantAgent（单 Agent + Tool Calling）
+│   │   ├── __init__.py
+│   │   ├── dev_assistant_agent.py   # 工厂 build_devassistant_agent + SYSTEM_PROMPT
+│   │   ├── middleware.py            # TraceRecorder / TraceMiddleware / SafeToolMiddleware
+│   │   └── tools/
+│   │       ├── __init__.py
+│   │       ├── calculator.py
+│   │       ├── read_text_file.py
+│   │       └── check_commit_message.py
+│   └── rag/                 # Week 5 RAG 检索（不含生成）
 │       ├── __init__.py
-│       ├── dev_assistant_agent.py   # 工厂 build_devassistant_agent + SYSTEM_PROMPT
-│       ├── middleware.py            # TraceRecorder / TraceMiddleware / SafeToolMiddleware
-│       └── tools/
-│           ├── __init__.py
-│           ├── calculator.py
-│           ├── read_text_file.py
-│           └── check_commit_message.py
-├── tests/                   # pytest 测试（13 个文件，188 用例）
+│       ├── ingestion.py     # 文档加载、切分、metadata、chunk_id
+│       ├── embeddings.py     # EmbeddingClient / FakeEmbedding / get_embedding 工厂
+│       ├── retriever.py     # ListRetriever（离线兜底）+ QdrantRetriever（主链路）
+│       ├── qdrant_store.py   # QdrantConfig、connect、ensure_collection、upsert、search
+│       ├── evaluate.py       # load_dataset / evaluate Recall@K / diagnose_miss / write_report
+│       └── probes.py         # ChunkingProbe 临时集合对照实验（切分归因）
+├── tests/                   # pytest 测试（24 个文件，259 用例）
 │   ├── conftest.py                 # 全局 fixture（预留）
 │   ├── fake_models.py              # Week 3 测试假模型（FakeToolCapableChatModel）
 │   ├── test_config.py              # AppConfig 配置加载 / 字段校验 / env 隔离
@@ -76,18 +109,34 @@ week01_ai_basics/
 │   ├── test_streaming.py           # /chat/stream SSE 逐 chunk 推送
 │   ├── test_concurrency.py         # asyncio.Semaphore 并发限制（MAX_CONCURRENCY）
 │   ├── test_middleware.py          # RequestId / AccessLog 中间件（rid 注入与日志）
-│   ├── test_api.py                 # 5 端点集成测试（ASGITransport，覆盖成功/422/401/429/502/504/404）
+│   ├── test_api.py                 # 6 端点集成测试（ASGITransport，覆盖成功/422/401/429/502/504/404）
 │   ├── test_structured_output.py   # /analyze-requirement 结构化输出契约与校验
 │   ├── test_agent_loop.py          # Week 3 Agent Loop 四个终止条件
 │   ├── test_devagent_tools.py      # Week 3 三个工具（含边界 / 越权 / 结构化错误）
 │   ├── test_devagent_agent.py      # Week 3 中间件 / 追踪 / 工厂
-│   └── test_atool_calling.py       # Week 3 20 条端到端用例（4 类场景）
+│   ├── test_atool_calling.py       # Week 3 20 条端到端用例（4 类场景）
+│   ├── test_dify_client.py         # Week 4 DifyWorkflowClient 初始化 / run / 异常
+│   ├── test_app_dify.py            # Week 4 POST /dify/run 路由成功 / 参数校验 / 异常
+│   ├── test_embedding_client.py    # Week 5 EmbeddingClient / FakeEmbedding 契约
+│   ├── test_qdrant_store.py        # Week 5 QdrantConfig / connect / upsert / search
+│   ├── test_rag_ingestion.py       # Week 5 文档加载 / 切分 / metadata
+│   ├── test_rag_retriever.py       # Week 5 ListRetriever / QdrantRetriever 检索
+│   ├── test_rag_evaluate.py        # Week 5 Recall@K / diagnose_miss 五类归因
+│   └── test_rag_probes.py          # Week 5 ChunkingProbe 对照实验与边界
 ├── examples/                # 真实 / 样本数据
 │   ├── requirement_samples.json    # 需求分析样本
-│   └── structured_run_real.json    # 真实模型运行输出样本
+│   ├── structured_run_real.json    # 真实模型运行输出样本
+│   └── retrieval_set.json          # Week 5 20 条人工标注检索集（expected_sources）
 ├── scripts/                 # 一次性脚本（真实跑）
 │   ├── run_real_ollama.py   # 真实调用 ollama 验证脚本（自带 src/ 路径）
-│   └── serve.py             # 绕过 Windows AppLocker 的本地 ASGI launcher
+│   ├── serve.py             # 绕过 Windows AppLocker 的本地 ASGI launcher
+│   ├── call_dify_workflow.py  # Week 4 本机直连 Dify API 调用 / 校验
+│   ├── rag_week5_demo.py      # Week 5 RAG 检索 demo（离线 FakeEmbedding）
+│   ├── rag_week5_real_demo.py # Week 5 真实 Embedding + Docker Qdrant 闭环演示
+│   └── rag_week5_eval.py      # Week 5 Recall@K 评测（--show-results / --verbose / --offline）
+├── dify_workflows/          # Week 4 导出的 Dify 工作流 DSL
+│   ├── DevAssistantAgent_Dify.yml   # Day 17 四分支工作流（calculator/check_commit/kb/chat）
+│   └── RequirementAnalysis_Dify.yml # Day 18 需求分析工作流
 ├── logs/                    # 脚本运行日志（不入库）
 │   └── ollama_run.log
 └── docs/                    # 学习笔记、阶段交付物
@@ -106,6 +155,15 @@ week01_ai_basics/
     ├── week01_summary.md    # 第 1 周五天总结
     ├── week02_summary.md    # 第 2 周阶段总结
     ├── week03_summary.md    # 第 3 周阶段总结
+    ├── day16_dify_concepts.md
+    ├── day17_dify_repro_design.md  # Day 17 设计 + §10 元 Schema 修正步骤
+    ├── day17_task_summary.md
+    ├── day18_task_summary.md
+    ├── day19_task_summary.md
+    ├── day20_dify_vs_code_report.md  # Dify 版 vs 代码版对比
+    ├── week04_summary.md    # 第 4 周阶段总结
+    ├── week05_retrieval_eval.md  # Week 5 Recall@K 评测报告
+    ├── week05_summary.md    # 第 5 周阶段总结
     └── poho/                # 运行 / 测试截图（不入库）
 ```
 
@@ -125,8 +183,11 @@ week01_ai_basics/
 | 数据模型    | Pydantic v2                 | 配置校验、结构化输出、HTTP 线协议      |
 | 配置加载    | pydantic-settings           | 从 `.env` 读取 `AppConfig`（Week 2 起）|
 | 流式响应    | sse-starlette               | `POST /chat/stream` 的 SSE 推送        |
-| API 服务    | FastAPI[standard] + Uvicorn | 5 端点服务（含 `fastapi` CLI + uvicorn）|
+| API 服务    | FastAPI[standard] + Uvicorn | 6 端点服务（含 `fastapi` CLI + uvicorn，Week 4 增 `POST /dify/run`）|
 | Agent 框架    | LangChain v1               | `create_agent` + `@tool` + `AgentMiddleware`（Week 3 起）|
+| 向量数据库  | Qdrant                      | Week 5 RAG 向量存储（Collection + Point + 向量检索，Cosine）|
+| Embedding   | mxbai-embed-large（Ollama） | Week 5 文本向量化（dim=1024）；离线用 FakeEmbedding |
+| 工作流平台  | Dify                        | Week 4 可视化工作流（节点/变量/分支/知识检索），API 由 `POST /dify/run` 调用 |
 | 环境变量    | python-dotenv               | 读取 `.env` 中的密钥与配置            |
 
 ---
@@ -186,7 +247,7 @@ uv run fastapi run src/main.py      # 生产模式
 
 ## 6. API 服务
 
-启动后默认监听 `http://127.0.0.1:8000`，共 5 个端点：
+启动后默认监听 `http://127.0.0.1:8000`，共 6 个端点：
 
 | 方法 | 路径 | 用途 | 输入 Schema | 输出 Schema |
 | --- | --- | --- | --- | --- |
@@ -195,6 +256,7 @@ uv run fastapi run src/main.py      # 生产模式
 | POST | `/chat/stream` | 流式对话，SSE 逐 chunk 推送 | `ChatRequest` | `text/event-stream`（`ChatChunk` 序列，末片 `done:true`） |
 | GET  | `/models` | 列出可用模型 + 当前默认模型 | - | `ModelsResponse` |
 | POST | `/analyze-requirement` | 结构化需求分析（JSON Mode + Pydantic 校验） | `AnalyzeRequirementRequest` | `AnalyzeRequirementResponse` (extends `RequirementAnalysis`) |
+| POST | `/dify/run` | 通用透传：调用 `.env` 中 `DIFY_API_KEY` 指向的 Dify 工作流（Week 4 新增） | `DifyRunRequest` | `DifyRunResponse`（`outputs` 透传） |
 
 所有 I/O 模型定义在 `src/api_models.py`；所有错误统一为 `ErrorResponse`（内含 `ErrorBody`）：
 
@@ -332,13 +394,15 @@ curl -s -X POST http://127.0.0.1:8000/analyze-requirement \
 ## 7. 测试与质量
 
 ```bash
-# 全部测试（截至 Week 3 共 188 passed）
+# 全部测试（截至 Week 5 共 259 passed）
 uv run pytest -q
 
 # 按模块运行（部分示例）
 uv run pytest -v tests/test_api.py
 uv run pytest -v tests/test_streaming.py
 uv run pytest -v tests/test_atool_calling.py
+uv run pytest -v tests/test_dify_client.py tests/test_app_dify.py
+uv run pytest -v tests/test_rag_evaluate.py tests/test_rag_probes.py
 
 # 单个用例
 uv run pytest -v tests/test_api.py::test_chat_timeout_returns_504
@@ -351,7 +415,7 @@ uv run ruff format --check .
 curl http://127.0.0.1:8000/health
 ```
 
-**测试内容（13 个文件 / 188 用例）**
+**测试内容（24 个文件 / 259 用例）**
 
 | 测试文件 | 覆盖主题 | 关键验证点 |
 | --- | --- | --- |
@@ -361,12 +425,20 @@ curl http://127.0.0.1:8000/health
 | `test_streaming.py` | 流式接口 | `/chat/stream` 逐 `ChatChunk` 推送、末片 `done:true`、中断处理 |
 | `test_concurrency.py` | 并发限制 | `asyncio.Semaphore` 限制同时打后端的请求数（`MAX_CONCURRENCY`） |
 | `test_middleware.py` | 中间件 | `RequestIdASGIMiddleware` 注入/传播 rid、`AccessLogMiddleware` 结构化日志且不读敏感字段 |
-| `test_api.py` | 5 端点集成 | 用 `httpx.ASGITransport` 在内存跑整个 ASGI 栈，覆盖 `/health` `/chat` `/chat/stream` `/models` `/analyze-requirement` 的成功与 422/401/429/502/504/404 全分支 |
+| `test_api.py` | 6 端点集成 | 用 `httpx.ASGITransport` 在内存跑整个 ASGI 栈，覆盖 `/health` `/chat` `/chat/stream` `/models` `/analyze-requirement` `/dify/run` 的成功与 422/401/429/502/504/404 全分支 |
 | `test_structured_output.py` | 结构化输出 | `/analyze-requirement` 返回符合 `RequirementAnalysis` 契约、JSON Mode 闭环 |
 | `test_agent_loop.py` | Agent Loop | 四个终止条件（直接 final / 调工具→结果→final / 异常兜底 / recursion_limit 截断） |
 | `test_devagent_tools.py` | 三个工具 | `calculator` AST 白名单、`read_text_file` 沙箱防穿越、`check_commit_message` 规范校验 |
 | `test_devagent_agent.py` | 中间件 / 工厂 | `TraceRecorder` 事件记录、`TraceMiddleware` 三钩子、`SafeToolMiddleware` 兜底、`build_devassistant_agent` 工厂 |
 | `test_atool_calling.py` | 20 条端到端用例 | 4 类场景：正确选工具 6 / 无需工具 4 / 错误参数 5 / 工具失败 5 |
+| `test_dify_client.py` | Week 4 DifyWorkflowClient | 初始化校验（缺 key 抛错）、`run()` 成功、参数/异常分支 |
+| `test_app_dify.py` | Week 4 POST /dify/run | 路由成功 / 参数校验 / 异常分支 |
+| `test_embedding_client.py` | Week 5 Embedding | `EmbeddingClient` / `FakeEmbedding` 维度一致、工厂返回正确实例 |
+| `test_qdrant_store.py` | Week 5 Qdrant | `QdrantConfig` 解析、connect、ensure_collection、upsert、search 边界 |
+| `test_rag_ingestion.py` | Week 5 解析切分 | 文档加载、`chunk_size/overlap` 切分、metadata 与 `source` 保留 |
+| `test_rag_retriever.py` | Week 5 检索 | `ListRetriever` 离线相似度、`QdrantRetriever` 主链路返回 `chunk_id/source/score/text` |
+| `test_rag_evaluate.py` | Week 5 评测 | Recall@K 统计、五类未命中归因（过滤/解析/检索异常/TopK/Embedding 或切分）、`detail_out` |
+| `test_rag_probes.py` | Week 5 切分归因 | `ChunkingProbe` 临时集合对照、方案齐全、语义高分、空 paths/非法方案/维度不一致报错 |
 
 **测试架构要点**
 
@@ -375,3 +447,15 @@ curl http://127.0.0.1:8000/health
 - `pytest-asyncio` 设为 `asyncio_mode="auto"`，异步用例无需显式标记。
 - `pythonpath=["src"]` 已配置，测试内 `from app import create_app` 等扁平的 import 可直接解析。
 - Week 3 Agent 测试用 `FakeToolCapableChatModel`（`tests/fake_models.py`）假模型按预设序列返回 `AIMessage`（含 `tool_calls`），不依赖真实 LLM；工具失败场景用测试内 `@tool` 自定义 `boom_*` 函数 + `create_agent(middleware=[SafeToolMiddleware()])` 直构造验证兜底。
+
+---
+
+## 8. 更新记录
+
+> 记录 README 与项目的每周更新节点。
+
+| 周次 | 日期 | 项目更新 | README 更新 |
+| --- | --- | --- | --- |
+| Week 1–3 | 2026-08 初 | 工程基线 + 模型服务（5 端点）+ 单 Agent（DevAssistantAgent，3 工具 2 中间件）；全量 **188 passed** | 初版 README：项目内容 / 目录结构 / 技术栈 / 环境 / 启动 / API / 测试（覆盖 Week 1–3） |
+| Week 4 | 2026-08-14 | Dify 双工作流 DSL（`dify_workflows/`）+ `POST /dify/run` 通用透传端点 + `DifyWorkflowClient`；Dify 版 vs 代码版对比报告；全量 **194 passed** | **未更新**（本周落档时遗漏 README 同步） |
+| Week 5 | 2026-08-20 | RAG 检索基础（`src/rag/`：ingestion / embeddings / retriever / qdrant_store / evaluate / probes）+ 离线可跑的 Recall@K 评测框架，五类未命中归因闭环；全量 **259 passed** | **本次更新**：补入 Week 4 + Week 5 内容——顶部概述、§1 项目内容（W4/W5 段落 + 最终实现）、§2 目录结构（新增 `src/rag`、`dify_client`、`tests` 新文件、`scripts` 新脚本、`examples/retrieval_set.json`、`dify_workflows/`、docs 新文档）、§3 技术栈（Qdrant / Embedding / Dify）、§6 API（6 端点，新增 `POST /dify/run`）、§7 测试（259 passed + 新增测试表行）、并新增本 §8 更新记录 |
