@@ -1,7 +1,7 @@
 # 检索评测报告（Recall@K）
 
-- 生成时间：2026-08-18 15:55:59
-- Embedding：EmbeddingClient（模型 mxbai-embed-large，维度 1024）
+- 生成时间：2026-08-20 11:28:51
+- Embedding：FakeEmbedding（模型 FakeEmbedding(离线)，维度 1024）
 - Qdrant：mode=docker，collection=rag_chunks，索引片段 41 个
 
 ## 一、评测集构成
@@ -25,32 +25,21 @@
 
 | K | 命中数 | Recall |
 |---|--------|--------|
-| @1 | 14 / 18 | 0.778 |
-| @3 | 15 / 18 | 0.833 |
-| @5 | 16 / 18 | 0.889 |
+| @1 | 11 / 18 | 0.611 |
+| @3 | 18 / 18 | 1.000 |
+| @5 | 18 / 18 | 1.000 |
 
 无答案样本误召回：2 / 2（前 5 条仍返回了结果，理想为 0）
 
 ## 三、错误样本与归因
 
-### 未命中（2 条）
-
-1. **第 5 周的通过标准是什么？**
-   - 期望来源：roadmap_week5.md
-   - 前 5 来源：rag_pipeline.md, rag_pipeline.md, rag_evaluation.md, rag_evaluation.md, rag_concepts.md
-   - 归因：roadmap_week5.md：最高分 0.6347 低于第 5 名 0.6904（Embedding 表达不足）
-2. **怎么让知识库问答避免编造答案？**
-   - 期望来源：rag_concepts.md
-   - 前 5 来源：rag_pipeline.md, poem_ci_鹧鸪天_晏几道.md, rag_pipeline.md, rag_evaluation.md, embedding_models.md
-   - 归因：rag_concepts.md：最高分 0.5984 低于第 5 名 0.6037（Embedding 表达不足）
-
 ### 无答案误召回（2 条）
 
 1. **君不见黄河之水天上来 出自李白的哪首诗？**
-   - 前 5 来源：poem_ci_卜算子_李之仪.md, poem_tang_怨情_李白.md, poem_ci_卜算子_王观.md, rag_pipeline.md, poem_ci_临江仙_晏几道.md
+   - 前 5 来源：rag_concepts.md, roadmap_week5.md, rag_concepts.md, poem_ci_鹧鸪天_晏几道.md, qdrant_basics.md
    - 说明：无答案样本仍返回了结果（应拒答却未拒答）
 2. **2024 年巴黎奥运会开幕式的举办日期是？**
-   - 前 5 来源：poem_ci_鹧鸪天_晏几道.md, poem_tang_横吹曲辞 出塞 一_王昌龄.md, rag_pipeline.md, rag_pipeline.md, rag_evaluation.md
+   - 前 5 来源：poem_ci_鹧鸪天_晏几道.md, rag_concepts.md, roadmap_week5.md, rag_concepts.md, qdrant_basics.md
    - 说明：无答案样本仍返回了结果（应拒答却未拒答）
 
 ## 四、结论与下一步
