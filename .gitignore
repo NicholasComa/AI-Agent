@@ -45,6 +45,9 @@ htmlcov/
 # Ruff
 .ruff_cache/
 
+# uv 缓存（项目本地重定向，见 .env 中 UV_CACHE_DIR）
+.uv-cache/
+
 # mypy / type checkers
 .mypy_cache/
 .dmypy.json

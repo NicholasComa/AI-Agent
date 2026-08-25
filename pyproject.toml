@@ -11,6 +11,7 @@ dependencies = [
     "numpy>=2.5.2",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.2",
+    "pypdf>=6.16.2",
     "python-dotenv>=1.2.2",
     "qdrant-client>=1.19.0",
     "sse-starlette>=3.4.6",
