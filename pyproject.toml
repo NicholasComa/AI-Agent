@@ -62,6 +62,7 @@ ignore = [
 "scripts/rag_week5_eval.py" = ["E402"]  # bootstrap: must add src/ to sys.path before local imports
 "scripts/rag_week6_ingest.py" = ["E402"]  # bootstrap: must add src/ to sys.path before local imports
 "scripts/rag_week6_qa.py" = ["E402"]  # bootstrap: must add src/ to sys.path before local imports
+"scripts/rag_week6_param_compare.py" = ["E402"]  # bootstrap: must add src/ to sys.path before local imports
 
 [tool.ruff.format]
 quote-style = "double"
