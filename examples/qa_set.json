@@ -1,0 +1,172 @@
+[
+  {
+    "question": "RAG 的全称是什么？",
+    "expect_found": true,
+    "expect_source": "rag_concepts.md",
+    "note": "事实型-术语"
+  },
+  {
+    "question": "Overlap 重叠的作用是什么？",
+    "expect_found": true,
+    "expect_source": "rag_concepts.md",
+    "note": "事实型-概念"
+  },
+  {
+    "question": "Metadata 元数据在 RAG 中有哪些用途？",
+    "expect_found": true,
+    "expect_source": "rag_concepts.md",
+    "note": "事实型-概念"
+  },
+  {
+    "question": "Qdrant 的 Point 由哪几部分组成？",
+    "expect_found": true,
+    "expect_source": "qdrant_basics.md",
+    "note": "事实型-概念"
+  },
+  {
+    "question": "Qdrant 的 Local Mode 本地模式有什么特点？",
+    "expect_found": true,
+    "expect_source": "qdrant_basics.md",
+    "note": "事实型-概念"
+  },
+  {
+    "question": "RAG 管道的五个阶段是什么？",
+    "expect_found": true,
+    "expect_source": "rag_pipeline.md",
+    "note": "事实型-流程"
+  },
+  {
+    "question": "Recall@K 指标是如何计算的？",
+    "expect_found": true,
+    "expect_source": "rag_evaluation.md",
+    "note": "事实型-评测"
+  },
+  {
+    "question": "第 5 周的通过标准是什么？",
+    "expect_found": true,
+    "expect_source": "roadmap_week5.md",
+    "note": "事实型-任务"
+  },
+  {
+    "question": "Embedding 模型常见的向量维度有哪些？",
+    "expect_found": true,
+    "expect_source": "embedding_models.md",
+    "note": "事实型-概念"
+  },
+  {
+    "question": "红豆生南国 出自哪位诗人的哪首诗？",
+    "expect_found": true,
+    "expect_source": "poem_tang_相思_王维.md",
+    "note": "诗词-唐诗"
+  },
+  {
+    "question": "秦时明月汉时关 是王昌龄的哪首诗？",
+    "expect_found": true,
+    "expect_source": "poem_tang_横吹曲辞 出塞 一_王昌龄.md",
+    "note": "诗词-唐诗"
+  },
+  {
+    "question": "我住长江头，君住长江尾 是哪位词人的作品？",
+    "expect_found": true,
+    "expect_source": "poem_ci_卜算子_李之仪.md",
+    "note": "诗词-宋词"
+  },
+  {
+    "question": "千里澄江似练，翠峰如簇 出自哪首词？",
+    "expect_found": true,
+    "expect_source": "poem_ci_桂枝香_王安石.md",
+    "note": "诗词-宋词"
+  },
+  {
+    "question": "水是眼波横，山是眉峰聚 出自哪位词人的作品？",
+    "expect_found": true,
+    "expect_source": "poem_ci_卜算子_王观.md",
+    "note": "诗词-宋词"
+  },
+  {
+    "question": "《怨情》中「美人卷珠帘」的作者是谁？",
+    "expect_found": true,
+    "expect_source": "poem_tang_怨情_李白.md",
+    "note": "诗词-唐诗"
+  },
+  {
+    "question": "为什么 RAG 要让检索与生成职责分离？",
+    "expect_found": true,
+    "expect_source": "rag_concepts.md",
+    "note": "跨文档"
+  },
+  {
+    "question": "向量距离有哪些常用的度量方式？",
+    "expect_found": true,
+    "expect_source": "rag_concepts.md",
+    "note": "跨文档"
+  },
+  {
+    "question": "检索结果不对时，可能问题出在哪些环节？",
+    "expect_found": true,
+    "expect_source": "rag_concepts.md",
+    "note": "跨文档-错误归因"
+  },
+  {
+    "question": "文本向量化之后，检索问题变成了什么计算？",
+    "expect_found": true,
+    "expect_source": "rag_concepts.md",
+    "note": "同义改写"
+  },
+  {
+    "question": "怎么让知识库问答避免编造答案？",
+    "expect_found": true,
+    "expect_source": "rag_concepts.md",
+    "note": "同义改写-幻觉"
+  },
+  {
+    "question": "君不见黄河之水天上来 出自李白的哪首诗？",
+    "expect_found": false,
+    "note": "知识库无此诗-无法回答"
+  },
+  {
+    "question": "2024 年巴黎奥运会开幕式的举办日期是？",
+    "expect_found": false,
+    "note": "知识库无对应片段-无法回答"
+  },
+  {
+    "question": "南宁软件组下周团建活动的地点是哪里？",
+    "expect_found": false,
+    "note": "知识库无对应片段-无法回答"
+  },
+  {
+    "question": "DeepSeek 最新版模型的参数量是多少？",
+    "expect_found": false,
+    "note": "知识库无对应片段-无法回答"
+  },
+  {
+    "question": "2025 年央视春节联欢晚会的节目单是什么？",
+    "expect_found": false,
+    "note": "知识库无对应片段-无法回答"
+  },
+  {
+    "question": "公司食堂中午的营业时间是什么？",
+    "expect_found": false,
+    "note": "知识库无对应片段-无法回答"
+  },
+  {
+    "question": "李明的手机号码是多少？",
+    "expect_found": false,
+    "note": "知识库无对应片段-无法回答"
+  },
+  {
+    "question": "办理港澳通行证需要哪些材料？",
+    "expect_found": false,
+    "note": "知识库无对应片段-无法回答"
+  },
+  {
+    "question": "今年双十一的优惠规则是什么？",
+    "expect_found": false,
+    "note": "知识库无对应片段-无法回答"
+  },
+  {
+    "question": "Windows 12 的正式发布日期是哪天？",
+    "expect_found": false,
+    "note": "知识库无对应片段-无法回答"
+  }
+]
