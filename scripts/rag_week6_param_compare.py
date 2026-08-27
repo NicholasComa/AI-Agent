@@ -106,25 +106,22 @@ def _write_report(
     lines: list[str] = []
     lines.append("# 参数对比报告：chunk_size x TopK\n")
     lines.append(f"- 生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    lines.append(
-        f"- Embedding：{meta['embedder']}"
-        f"（模型 {meta['model']}，维度 {meta['dim']}）"
-    )
+    lines.append(f"- Embedding：{meta['embedder']}（模型 {meta['model']}，维度 {meta['dim']}）")
     lines.append(
         f"- Qdrant：mode={meta['mode']}，语料 {meta['source_count']} 个源文件，"
         f"检索集 {meta['dataset_size']} 条（有答案 {meta['answerable']} / 无答案 {meta['unanswerable']}）"
     )
     if meta.get("offline"):
-        lines.append("- **口径说明**：离线 FakeEmbedding 运行，Recall 仅供流程验证，不代表真实语义水平")
+        lines.append(
+            "- **口径说明**：离线 FakeEmbedding 运行，Recall 仅供流程验证，不代表真实语义水平"
+        )
     lines.append("")
 
     lines.append("## 一、2x2 对比总表\n")
     lines.append(
         "| chunk_size | TopK | Recall@1 | Recall@3 | Recall@5 | 无答案误召回 | 平均检索延迟 (ms) | 导入耗时 (s) | 片段数 |"
     )
-    lines.append(
-        "|---|---|---|---|---|---|---|---|---|"
-    )
+    lines.append("|---|---|---|---|---|---|---|---|---|")
     for r in rows:
         lines.append(
             f"| {r['chunk_size']} | {r['top_k']} | {r['recall1']:.3f} | {r['recall3']:.3f} "
@@ -159,7 +156,9 @@ def _write_report(
         for i, m in enumerate(items, 1):
             lines.append(f"{i}. **{m['query']}**")
             lines.append(f"   - 期望来源：{', '.join(m['expected_sources']) or '（空）'}")
-            lines.append(f"   - 前 {max(EVAL_TOP_KS)} 来源：{', '.join(m['top_sources']) or '（无结果）'}")
+            lines.append(
+                f"   - 前 {max(EVAL_TOP_KS)} 来源：{', '.join(m['top_sources']) or '（无结果）'}"
+            )
             lines.append(f"   - 归因：{m['diagnosis']}")
         lines.append("")
 
@@ -210,9 +209,7 @@ def _main() -> int:
     top_ks = _parse_ints(args.top_ks, "top-ks")
 
     raw_dir = Path(args.raw_dir)
-    sources = sorted(
-        {*raw_dir.glob("*.md"), *raw_dir.glob("*.txt"), *raw_dir.glob("*.pdf")}
-    )
+    sources = sorted({*raw_dir.glob("*.md"), *raw_dir.glob("*.txt"), *raw_dir.glob("*.pdf")})
     if not sources:
         print(f"[error] 未在 {raw_dir} 找到任何 .md/.txt/.pdf 源文档")
         return 1
