@@ -186,6 +186,7 @@ def search_points(
     query_vector: list[float],
     top_k: int = 3,
     source_filter: str | None = None,
+    query_filter: Filter | None = None,
 ) -> list[ScoredPoint]:
     """检索与 ``query_vector`` 最相似的 Top-K 个点。
 
@@ -194,7 +195,10 @@ def search_points(
         cfg: 配置。
         query_vector: 已向量化好的查询向量。
         top_k: 返回条数；``<= 0`` 抛 :class:`QdrantConfigError`。
-        source_filter: 可选的 ``source`` Payload 过滤（精确匹配）。
+        source_filter: 可选的 ``source`` Payload 过滤（精确匹配），
+            与 ``query_filter`` 同时提供时仅 ``query_filter`` 生效。
+        query_filter: 可选的通用 Qdrant Filter（用于 Metadata Filter
+            等组合条件）；为 ``None`` 时退回 ``source_filter`` 语义。
 
     Returns:
         Qdrant 返回的 :class:`ScoredPoint` 列表（按 score 降序）。
@@ -205,8 +209,7 @@ def search_points(
     if len(query_vector) != cfg.vector_size:
         msg = f"query_vector dim {len(query_vector)} != collection vector_size {cfg.vector_size}"
         raise QdrantConfigError(msg)
-    query_filter: Filter | None = None
-    if source_filter is not None:
+    if query_filter is None and source_filter is not None:
         query_filter = Filter(
             must=[FieldCondition(key="source", match=MatchValue(value=source_filter))]
         )

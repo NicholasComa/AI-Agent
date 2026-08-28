@@ -8,6 +8,11 @@
 - 检索阶段复用 :class:`rag.retriever.QdrantRetriever`，只负责召回，
   不调用 LLM（生成在后续阶段实现）。
 
+检索增强为可选项：构造时可通过 ``retriever`` 注入自定义检索器
+（如 :class:`rag.hybrid.HybridRetriever` 混合检索），通过 ``reranker``
+注入精排器（如 :class:`rag.rerank.EmbeddingReranker`）；两者默认
+均为 ``None``，此时行为与纯向量检索完全一致。
+
 本模块不引入新的向量化或存储实现，仅组合既有组件，保持职责分离。
 """
 
@@ -20,12 +25,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .embeddings import DEFAULT_DIM, FakeEmbedding, get_embedding
+from .filters import MetadataConditions
 from .ingestion import Chunk, build_chunks
 from .qdrant_store import QdrantConfig, connect
 from .retriever import QdrantRetriever, RetrievalResult
 
 if TYPE_CHECKING:
     from qdrant_client import QdrantClient
+
+    from .rerank import Reranker
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +60,9 @@ class JwipcKnowledgeRAG:
         *,
         chunk_size: int = 400,
         overlap: int = 80,
+        retriever: object | None = None,
+        reranker: Reranker | None = None,
+        coarse_top_k: int = 20,
     ) -> None:
         if chunk_size <= 0:
             msg = f"chunk_size must be > 0, got {chunk_size}"
@@ -62,11 +73,24 @@ class JwipcKnowledgeRAG:
         if overlap >= chunk_size:
             msg = f"overlap ({overlap}) must be < chunk_size ({chunk_size})"
             raise ValueError(msg)
+        if coarse_top_k <= 0:
+            msg = f"coarse_top_k must be > 0, got {coarse_top_k}"
+            raise ValueError(msg)
         self._embedder = embedder
         self._config = config
         self._chunk_size = chunk_size
         self._overlap = overlap
-        self._retriever = QdrantRetriever(embedder, config, client)  # type: ignore[arg-type]
+        self._reranker = reranker
+        self._coarse_top_k = coarse_top_k
+        self._retriever = (
+            retriever
+            if retriever is not None
+            else QdrantRetriever(
+                embedder,
+                config,
+                client,  # type: ignore[arg-type]
+            )
+        )
 
     @property
     def config(self) -> QdrantConfig:
@@ -124,9 +148,34 @@ class JwipcKnowledgeRAG:
             all_chunks.extend(self.add_document(f))
         return all_chunks
 
-    def retrieve(self, query: str, top_k: int = 3) -> list[RetrievalResult]:
-        """检索与 ``query`` 最相似的 Top-K 片段（仅召回，不生成答案）。"""
-        return self._retriever.search(query, top_k=top_k)
+    def retrieve(
+        self,
+        query: str,
+        top_k: int = 3,
+        *,
+        source_filter: str | None = None,
+        metadata: MetadataConditions | None = None,
+    ) -> list[RetrievalResult]:
+        """检索与 ``query`` 最相似的 Top-K 片段（仅召回，不生成答案）。
+
+        未配置精排器时等价于 ``QdrantRetriever.search``（支持
+        ``source_filter`` / ``metadata`` 过滤）；配置了 ``reranker`` 时
+        先粗召回 ``coarse_top_k`` 条再精排取 Top-K。
+        """
+        if self._reranker is None:
+            return self._retriever.search(
+                query,
+                top_k=top_k,
+                source_filter=source_filter,
+                metadata=metadata,
+            )
+        coarse = self._retriever.search(
+            query,
+            top_k=self._coarse_top_k,
+            source_filter=source_filter,
+            metadata=metadata,
+        )
+        return self._reranker.rerank(query, coarse, top_k)
 
     def count(self) -> int:
         """返回集合中已写入的片段数量。"""

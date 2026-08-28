@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .embeddings import Embedder
+from .filters import MetadataConditions, build_filter
 from .ingestion import Chunk
 
 if TYPE_CHECKING:
@@ -146,6 +147,25 @@ class QdrantRetriever:
         info = self._client.get_collection(self._config.collection_name)
         return int(info.points_count or 0)
 
+    def _build_payload(self, chunk: Chunk) -> dict[str, object]:
+        """构造写入 Qdrant 的 Payload：基础字段 + ``Chunk.metadata`` 全量展开。
+
+        基础字段（chunk_id / source / text / chunk_index / char_start）与
+        metadata 中的扩展字段（file_type / page 等）合并；metadata 键与
+        基础字段重名时以基础字段为准。
+        """
+        payload: dict[str, object] = {
+            "chunk_id": chunk.chunk_id,
+            "source": chunk.source,
+            "text": chunk.text,
+            "chunk_index": chunk.metadata.get("chunk_index", -1),
+            "char_start": chunk.metadata.get("char_start", -1),
+        }
+        for key, value in chunk.metadata.items():
+            if key not in payload:
+                payload[key] = value
+        return payload
+
     def index(self, chunks: list[Chunk]) -> int:
         """把片段向量化并写入 Qdrant；返回写入数量。"""
         if not chunks:
@@ -163,13 +183,7 @@ class QdrantRetriever:
             self._build_point(
                 point_id=chunk.chunk_id,
                 vector=vec,
-                payload={
-                    "chunk_id": chunk.chunk_id,
-                    "source": chunk.source,
-                    "text": chunk.text,
-                    "chunk_index": chunk.metadata.get("chunk_index", -1),
-                    "char_start": chunk.metadata.get("char_start", -1),
-                },
+                payload=self._build_payload(chunk),
             )
             for chunk, vec in zip(chunks, vectors, strict=False)
         ]
@@ -180,6 +194,7 @@ class QdrantRetriever:
         query: str,
         top_k: int = 3,
         source_filter: str | None = None,
+        metadata: MetadataConditions | None = None,
     ) -> list[RetrievalResult]:
         """检索与 ``query`` 最相似的 Top-K 个片段。
 
@@ -187,6 +202,8 @@ class QdrantRetriever:
             query: 查询文本。
             top_k: 返回的片段数量。
             source_filter: 可选，按 ``source`` 精确过滤。
+            metadata: 可选，通用元数据过滤条件（键 -> 精确值或候选集），
+                与 ``source_filter`` 同时提供时按 AND 合并。
 
         Returns:
             按 ``score`` 降序的 :class:`RetrievalResult` 列表。
@@ -204,7 +221,11 @@ class QdrantRetriever:
             )
             raise ValueError(msg)
         hits = search_points(
-            self._client, self._config, q_vec, top_k=top_k, source_filter=source_filter
+            self._client,
+            self._config,
+            q_vec,
+            top_k=top_k,
+            query_filter=build_filter(metadata, source_filter),
         )
         results: list[RetrievalResult] = []
         for hit in hits:
