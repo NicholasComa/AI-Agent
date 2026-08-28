@@ -1,4 +1,4 @@
-"""2x2 参数网格评测：chunk_size x TopK 对召回效果与延迟的影响。
+"""chunk_size × TopK 参数网格评测：不同切分粒度与召回条数对召回效果与延迟的影响。
 
 从项目根目录运行（脚本自带 ``src/`` 的 sys.path 引导，无需 PYTHONPATH）::
 
@@ -10,7 +10,7 @@
 2. 对每个 ``chunk_size`` 建立独立集合（前缀 ``--collection-prefix``），导入语料并计时。
 3. 对每个 ``top_k`` 逐条检索计时（含 query 向量化与 Qdrant 搜索），统计平均延迟。
 4. 复用 :func:`rag.evaluate.evaluate` 统计 Recall@1/3/5 与无答案误召回。
-5. 汇总 2x2 对比表与候选方案，生成 Markdown 报告。
+5. 汇总参数对比表（标题按实际网格维度生成）与候选方案，生成 Markdown 报告。
 """
 
 from __future__ import annotations
@@ -100,7 +100,7 @@ def _write_report(
     rows: list[dict[str, Any]],
     misses_by_cs: dict[int, list[dict[str, Any]]],
 ) -> Path:
-    """生成 2x2 参数对比 Markdown 报告。"""
+    """生成 chunk_size × TopK 参数对比 Markdown 报告（标题按实际网格维度生成）。"""
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     lines: list[str] = []
@@ -117,7 +117,9 @@ def _write_report(
         )
     lines.append("")
 
-    lines.append("## 一、2x2 对比总表\n")
+    n_cs = len({r["chunk_size"] for r in rows})
+    n_tk = len({r["top_k"] for r in rows})
+    lines.append(f"## 一、{n_cs}x{n_tk} 对比总表\n")
     lines.append(
         "| chunk_size | TopK | Recall@1 | Recall@3 | Recall@5 | 无答案误召回 | 平均检索延迟 (ms) | 导入耗时 (s) | 片段数 |"
     )
@@ -131,18 +133,23 @@ def _write_report(
     lines.append("")
 
     lines.append("## 二、结论\n")
-    best = max(rows, key=lambda r: (r["recall5"], -r["avg_ms"]))
+    # 优先看 Recall@1（Top1 命中质量最影响生成），再 Recall@5，最后用延迟做同分取舍。
+    best = max(rows, key=lambda r: (r["recall1"], r["recall5"], -r["avg_ms"]))
     lines.append(
         f"最优组合：**chunk_size={best['chunk_size']} + TopK={best['top_k']}**"
-        f"（Recall@5={best['recall5']:.3f}，平均延迟 {best['avg_ms']:.1f} ms）。"
+        f"（Recall@1={best['recall1']:.3f}，Recall@5={best['recall5']:.3f}，"
+        f"平均延迟 {best['avg_ms']:.1f} ms）。"
     )
     lines.append(
         "- chunk_size 影响片段粒度与数量：小窗口片段更细、更易定位，但片段数多、导入耗时更长；"
-        "大窗口上下文更完整，但可能把不相关内容卷入同一片段。"
+        f"大窗口上下文更完整，但可能把不相关内容卷入同一片段。本网格中 chunk_size 是 Recall 的主因"
+        f"（最优 {best['chunk_size']} 的 Recall@1 明显高于其它取值）。"
     )
     lines.append(
-        "- TopK 影响召回条数与生成上下文规模：TopK 越大召回率越高，但延迟与上下文噪音随之上升；"
-        "配合生成阶段的无答案阈值（min_score）可抵消部分噪音。"
+        "- TopK 在本报告中不影响 Recall@1/3/5：评测对每条查询固定取前 5 名排序计算 Recall，"
+        "因此请求 TopK=3/5/8 得到的 Recall 数值一致；TopK 真正影响的是返回给生成阶段的候选条数"
+        "与（边际）延迟。TopK 应按「生成所需上下文规模」选择，并用生成阶段的无答案阈值"
+        "（min_score）抵消多余噪音，而非用来提升 Recall。"
     )
     lines.append("")
 
