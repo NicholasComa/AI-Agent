@@ -76,6 +76,70 @@ def test_qdrant_retriever_search_with_source_filter() -> None:
     assert all(r.source == "qdrant.md" for r in results)
 
 
+def _chunks_with_meta() -> list[Chunk]:
+    """含扩展元数据（file_type/page）的片段，验证 payload 完整化。"""
+    return [
+        Chunk(
+            chunk_id="a.pdf#0",
+            source="a.pdf",
+            text="矢量数据库基础。",
+            metadata={"chunk_index": 0, "char_start": 0, "file_type": "pdf", "page": 1},
+        ),
+        Chunk(
+            chunk_id="b.md#0",
+            source="b.md",
+            text="检索增强生成原理。",
+            metadata={"chunk_index": 0, "char_start": 0, "file_type": "text"},
+        ),
+    ]
+
+
+def test_qdrant_retriever_search_with_metadata_filter() -> None:
+    """正常：metadata 过滤只返回满足条件的片段（回归：payload 完整化后可用）。"""
+    emb = FakeEmbedding(dim=8)
+    cfg = _make_cfg(collection="meta_rag")
+    retriever = QdrantRetriever(emb, cfg)
+    retriever.index(_chunks_with_meta())
+    results = retriever.search("检索", top_k=10, metadata={"file_type": ["pdf"]})
+    assert results
+    assert all(r.source.endswith(".pdf") for r in results)
+
+
+def test_qdrant_retriever_payload_keeps_full_metadata() -> None:
+    """正常：payload 保留 Chunk.metadata 全量字段（file_type/page 不再丢弃）。"""
+    emb = FakeEmbedding(dim=8)
+    cfg = _make_cfg(collection="payload_rag")
+    client = connect(cfg)
+    retriever = QdrantRetriever(emb, cfg, client)
+    retriever.index(_chunks_with_meta())
+    hits = client.query_points(
+        collection_name=cfg.collection_name,
+        query=emb.embed(["矢量"])[0],
+        limit=10,
+        with_payload=True,
+    )
+    payloads = {str(h.payload.get("chunk_id")): h.payload for h in hits.points}
+    assert payloads["a.pdf#0"]["file_type"] == "pdf"
+    assert payloads["a.pdf#0"]["page"] == 1
+    assert payloads["a.pdf#0"]["source"] == "a.pdf"
+
+
+def test_qdrant_retriever_metadata_and_source_combined() -> None:
+    """正常：metadata 与 source_filter 同时给出时按 AND 合并。"""
+    emb = FakeEmbedding(dim=8)
+    cfg = _make_cfg(collection="combo_rag")
+    retriever = QdrantRetriever(emb, cfg)
+    retriever.index(_chunks_with_meta())
+    results = retriever.search(
+        "检索",
+        top_k=10,
+        source_filter="b.md",
+        metadata={"file_type": ["text"]},
+    )
+    assert results
+    assert all(r.source == "b.md" for r in results)
+
+
 def test_qdrant_config_rejects_unsupported_mode() -> None:
     """异常 1：mode 取值非法 → QdrantConfigError。"""
     with pytest.raises(QdrantConfigError, match="unsupported Qdrant mode"):
