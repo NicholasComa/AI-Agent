@@ -75,9 +75,9 @@ src/rag_api.py  POST /rag/query  (QueryReq extra=forbid → RagAnswer)
 
 | Commit | 日期 | 说明 |
 | -------- | -------- | -------- |
-| `4f1153b` | 08-28 | func: usb: Add weekly task summary document                                          |
-| `2e8d579` | 08-28 | docs: app: Update parameter comparison report                                       |
-| `4dcc03f` | 08-28 | func: usb: Add RAG enhancement script and update parameter comparison script        |
+| `5579293` | 08-28 | func: app: Add weekly task summary document                                          |
+| `22cbb9a` | 08-28 | docs: app: Update parameter comparison report                                       |
+| `3b3851e` | 08-28 | func: app: Add RAG enhancement script and update parameter comparison script        |
 | `56f312b` | 08-28 | func: app: Add unit tests for rag enhancement modules                               |
 | `3e76d8b` | 08-28 | func: app: Add metadata filter, hybrid search and rerank into src/rag               |
 | `7556992` | 08-27 | func: app: Add relevant functional test cases                                     |
