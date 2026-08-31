@@ -181,6 +181,43 @@ async def test_reject_when_llm_says_no(rag: JwipcKnowledgeRAG) -> None:
     assert ans.answer == NO_ANSWER_TEXT
 
 
+async def test_no_answer_retries_with_double_topk(embedder: FakeEmbedding, tmp_path) -> None:
+    """拒答重试：LLM 首判无答案时，用 top_k×2 重新召回再问一次。"""
+    rag = _make_rag(
+        embedder,
+        tmp_path,
+        [("a.md", DOC_ZH), ("b.md", DOC_ZH + " 补充第二段内容。"), ("c.md", DOC_ZH + " 第三段内容。")],
+    )
+    no_payload = {"answer": "", "has_answer": False, "citations": [], "confidence": 0.05}
+    ref_counts: list[int] = []
+
+    def _payload(messages: list[dict[str, str]]) -> str:
+        ref_counts.append(messages[1]["content"].count("chunk_id="))
+        return json.dumps(no_payload)
+
+    chat = FakeChat(_payload)
+    gen = RagGenerator(rag, chat, top_k=1, min_score=0.0)
+
+    ans = await gen.answer(QUERY_HIT)
+
+    assert ans.rejected_reason == "llm_no_answer"
+    assert chat.call_count == 2
+    assert ref_counts == [1, 2], f"第二次应带 top_k×2 的参考资料，实际 {ref_counts}"
+
+
+async def test_no_answer_retry_can_be_disabled(embedder: FakeEmbedding, tmp_path) -> None:
+    """拒答重试：no_answer_retry=1 时不再二次调用 LLM。"""
+    rag = _make_rag(embedder, tmp_path, [("a.md", DOC_ZH)])
+    no_payload = {"answer": "", "has_answer": False, "citations": [], "confidence": 0.05}
+    chat = FakeChat(json.dumps(no_payload))
+    gen = RagGenerator(rag, chat, top_k=1, min_score=0.0, no_answer_retry=1)
+
+    ans = await gen.answer(QUERY_HIT)
+
+    assert chat.call_count == 1
+    assert ans.rejected_reason == "llm_no_answer"
+
+
 async def test_reject_on_parse_error(rag: JwipcKnowledgeRAG) -> None:
     gen = RagGenerator(rag, FakeChat("这不是JSON"), min_score=0.0)
 
@@ -251,6 +288,99 @@ async def test_reject_when_all_citations_invalid(rag: JwipcKnowledgeRAG) -> None
     assert ans.has_answer is False
     assert ans.rejected_reason == "invalid_citations"
     assert ans.answer == NO_ANSWER_TEXT
+
+
+async def test_remapped_citation_to_chunk_containing_quote(embedder: FakeEmbedding, tmp_path) -> None:
+    """引用校验：chunk_id 标错但 quote 确有出处时，改挂到真正包含原文的片段。"""
+    docs = [
+        ("a.md", "Qdrant 是向量数据库，支持语义检索与 Payload 过滤。"),
+        ("b.md", "Qdrant 支持混合检索与 Rerank 精排，适合 RAG 应用。"),
+    ]
+    rag = _make_rag(embedder, tmp_path, docs)
+    top = rag.retrieve(QUERY_HIT, top_k=3)
+    assert len(top) >= 2, "测试前提：至少召回两个片段"
+    first, second = top[0], top[1]
+
+    # chunk_id 指向 first，quote 却是 second 的原文 → 应改挂到 second
+    payload = {
+        "answer": "答案",
+        "has_answer": True,
+        "citations": [{"source": first.source, "chunk_id": first.chunk_id, "quote": second.text}],
+        "confidence": 0.9,
+    }
+    gen = RagGenerator(rag, FakeChat(json.dumps(payload, ensure_ascii=False)), min_score=0.0)
+
+    ans = await gen.answer(QUERY_HIT)
+
+    assert ans.has_answer is True
+    assert len(ans.citations) == 1
+    assert ans.citations[0].chunk_id == second.chunk_id
+    assert ans.citations[0].source == second.source
+
+
+async def test_drops_citation_with_quote_from_other_chunk(rag: JwipcKnowledgeRAG) -> None:
+    """引用校验：chunk_id 合法但 quote 不属于该片段原文时，该条引用被丢弃。"""
+    chunk_id = rag.retrieve(QUERY_HIT, top_k=3)[0].chunk_id
+    payload = {
+        "answer": "Qdrant 是一个向量数据库。",
+        "has_answer": True,
+        "citations": [
+            # quote 是编造的，不属于 DOC_ZH 原文 → 应被丢弃
+            {"source": "qdrant_intro.md", "chunk_id": chunk_id, "quote": "这句话不在资料里"},
+        ],
+        "confidence": 0.9,
+    }
+    gen = RagGenerator(rag, FakeChat(json.dumps(payload, ensure_ascii=False)), min_score=0.0)
+
+    ans = await gen.answer(QUERY_HIT)
+
+    assert ans.has_answer is False
+    assert ans.rejected_reason == "invalid_citations"
+
+
+async def test_quote_matching_ignores_whitespace_and_case(rag: JwipcKnowledgeRAG) -> None:
+    """引用校验：quote 改写换行 / 大小写 / 空白后仍应命中原文（不误杀）。"""
+    chunk_id = rag.retrieve(QUERY_HIT, top_k=3)[0].chunk_id
+    rewritten = DOC_ZH.replace("Qdrant", "qdrant").replace("，", "，\n ")
+    assert rewritten != DOC_ZH, "测试前提：quote 应与原文存在空白 / 大小写差异"
+    payload = {
+        "answer": "Qdrant 是一个向量数据库。",
+        "has_answer": True,
+        "citations": [{"source": "qdrant_intro.md", "chunk_id": chunk_id, "quote": rewritten}],
+        "confidence": 0.9,
+    }
+    gen = RagGenerator(rag, FakeChat(json.dumps(payload, ensure_ascii=False)), min_score=0.0)
+
+    ans = await gen.answer(QUERY_HIT)
+
+    assert ans.has_answer is True
+    assert len(ans.citations) == 1
+
+
+async def test_keeps_valid_citation_and_drops_mismatched_one(rag: JwipcKnowledgeRAG) -> None:
+    """引用校验：混合场景——合法引用保留、错位引用丢弃，答案正常返回。"""
+    top = rag.retrieve(QUERY_HIT, top_k=3)
+    chunk_id = top[0].chunk_id
+    other_text = next((r.text for r in top[1:] if r.text != top[0].text), None)
+    payload = {
+        "answer": "Qdrant 是一个向量数据库。",
+        "has_answer": True,
+        "citations": [
+            {"source": "qdrant_intro.md", "chunk_id": chunk_id, "quote": DOC_ZH},
+        ],
+        "confidence": 0.9,
+    }
+    if other_text:
+        payload["citations"].append(
+            {"source": "qdrant_intro.md", "chunk_id": chunk_id, "quote": other_text}
+        )
+    gen = RagGenerator(rag, FakeChat(json.dumps(payload, ensure_ascii=False)), min_score=0.0)
+
+    ans = await gen.answer(QUERY_HIT)
+
+    assert ans.has_answer is True
+    assert len(ans.citations) == 1
+    assert ans.citations[0].quote == DOC_ZH
 
 
 # ---------------------------------------------------------------------------

@@ -1,10 +1,10 @@
-"""rag.filters 单元测试：Metadata 过滤条件编译为 Qdrant Filter。"""
+"""rag.metadata_filter 单元测试：Metadata 过滤条件编译为 Qdrant Filter。"""
 
 from __future__ import annotations
 
 from rag.embeddings import FakeEmbedding
-from rag.filters import build_filter, file_type_is, source_is
 from rag.ingestion import Chunk
+from rag.metadata_filter import build_filter, file_type_is, source_is
 from rag.qdrant_store import QdrantConfig
 from rag.retriever import QdrantRetriever
 

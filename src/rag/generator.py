@@ -5,11 +5,15 @@
 
 - **召回侧拒答**：Top1 余弦相似度低于 ``min_score``（默认 0.3）时直接返回
   :data:`NO_ANSWER_TEXT`，**不调用 LLM**（省成本、从源头防幻觉）；
+- **Metadata Filter**：可选 ``metadata`` 条件透传到召回，限定本次答案
+  只能来自匹配 payload 的片段（如 file_type / source）；
 - **LLM 侧拒答**：即使分数达标，提示词也要求模型在资料不足时输出
   ``has_answer=false``；
 - **引用校验**：LLM 返回的 ``citations[].chunk_id`` 必须落在本次召回结果
-  集合内，非法引用被丢弃；合法引用全部丢失时降级为拒答，保证
-  「答案可追到原文」不被打折。
+  集合内，且 ``quote`` 必须是对应片段原文的子串（忽略空白 / 反斜杠差异）；
+  ``quote`` 确有出处但 ``chunk_id`` 标错时，自动改挂到真正包含该原文的
+  片段（保留证据、修正归属）；任何片段都匹配不上的引用被丢弃；合法引用
+  全部丢失时降级为拒答，保证「答案可追到原文」不被打折。
 
 LLM 调用通过 :data:`ChatFn` 注入（异步、输入 messages 输出文本），与具体
 客户端解耦；离线测试注入假实现即可跑通，真实链路由调用方把
@@ -27,6 +31,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .knowledge_rag import JwipcKnowledgeRAG
+from .metadata_filter import MetadataConditions
 from .retriever import RetrievalResult
 
 logger = logging.getLogger(__name__)
@@ -136,6 +141,47 @@ def build_rag_messages(
     ]
 
 
+_WHITESPACE_RE = re.compile(r"[\s\\]+")
+"""quote 匹配前剔除的字符：所有空白与反斜杠（容忍 LLM 把换行写成 ``\\n`` 字面量）。"""
+
+
+def _quote_in_text(quote: str, text: str) -> bool:
+    """判断 ``quote`` 是否归属 ``text``（忽略空白 / 反斜杠差异与大小写）。
+
+    LLM 给出的 quote 常有换行改写（真实换行写成 ``\\n`` 字面量、断行位置不同），
+    直接子串匹配会误杀；先剔除空白与反斜杠、统一小写后再做子串判断。
+    空 ``quote`` 一律视为不匹配。
+    """
+    needle = _WHITESPACE_RE.sub("", quote).casefold()
+    if not needle:
+        return False
+    return needle in _WHITESPACE_RE.sub("", text).casefold()
+
+
+def _validate_or_remap(citation: Citation, results: list[RetrievalResult]) -> Citation | None:
+    """校验一条引用；chunk_id 标错但 quote 确有出处的，改挂到正确片段。
+
+    规则：
+    1. ``chunk_id`` 在召回集合内且 ``quote`` 属于该片段原文 → 原样保留；
+    2. ``quote`` 不属于该片段、但能命中**其他**召回片段的原文 → 视为模型
+       把 ``chunk_id`` / ``source`` 标错，改挂到真正包含该原文的片段；
+    3. ``quote`` 在任何召回片段中都找不到 → 丢弃（返回 ``None``）。
+    """
+    by_id = {r.chunk_id: r for r in results}
+    hit = by_id.get(citation.chunk_id)
+    if hit is not None and _quote_in_text(citation.quote, hit.text):
+        return citation
+    for result in results:
+        if result.chunk_id != citation.chunk_id and _quote_in_text(citation.quote, result.text):
+            logger.info(
+                "rag.citation remapped chunk_id=%s -> %s (quote belongs elsewhere)",
+                citation.chunk_id,
+                result.chunk_id,
+            )
+            return citation.model_copy(update={"chunk_id": result.chunk_id, "source": result.source})
+    return None
+
+
 def _parse_llm_json(text: str) -> dict:
     """宽容解析 LLM 输出为 JSON 对象。
 
@@ -164,8 +210,12 @@ class RagGenerator:
         chat: LLM 调用契约，输入 messages 返回模型文本（异步）。
         top_k: 每次召回片段数（``<= 0`` 抛 ``ValueError``）。
         min_score: Top1 相似度阈值，低于即拒答（须在 0.0-1.0 内）。
+        metadata: 可选 Metadata Filter 条件，透传给 ``rag.retrieve``，
+            限定本次问答只从匹配 payload 的片段中召回（如 file_type / source）。
         system_prompt: 覆盖默认系统提示词。
         no_answer_text: 拒答文案。
+        no_answer_retry: LLM 判 ``has_answer=false`` 时用 ``top_k * no_answer_retry``
+            重新召回再问一次的倍率。``1``（或更小）关闭重试。
     """
 
     def __init__(
@@ -175,14 +225,19 @@ class RagGenerator:
         *,
         top_k: int = 3,
         min_score: float = DEFAULT_MIN_SCORE,
+        metadata: MetadataConditions | None = None,
         system_prompt: str = SYSTEM_PROMPT,
         no_answer_text: str = NO_ANSWER_TEXT,
+        no_answer_retry: int = 2,
     ) -> None:
         if top_k <= 0:
             msg = f"top_k must be > 0, got {top_k}"
             raise ValueError(msg)
         if not 0.0 <= min_score <= 1.0:
             msg = f"min_score must be in 0.0-1.0, got {min_score}"
+            raise ValueError(msg)
+        if no_answer_retry < 1:
+            msg = f"no_answer_retry must be >= 1, got {no_answer_retry}"
             raise ValueError(msg)
         if not callable(chat):
             msg = f"chat must be a callable returning an awaitable str, got {type(chat).__name__}"
@@ -191,8 +246,10 @@ class RagGenerator:
         self._chat = chat
         self._top_k = top_k
         self._min_score = min_score
+        self._metadata = metadata
         self._system_prompt = system_prompt
         self._no_answer_text = no_answer_text
+        self._no_answer_retry = no_answer_retry
 
     @property
     def top_k(self) -> int:
@@ -206,14 +263,38 @@ class RagGenerator:
         """对 ``query`` 执行检索增强生成，返回带引用答案或拒答结果。
 
         流程：召回 → 空结果/低分直接拒答 → 组装消息 → 调 LLM → 解析 →
-        引用白名单校验 → 有依据返回答案，否则降级拒答。
+        引用白名单校验 → 有依据返回答案；如 LLM 判 ``has_answer=false`` 且
+        ``no_answer_retry > 1``，用 ``top_k × 倍率`` 重召再问一次，仍无答案
+        才拒答（拒答文案/原因与一次到位一致）。
         """
-        results = self._rag.retrieve(query, top_k=self._top_k)
+        results = self._rag.retrieve(
+            query, top_k=self._top_k, metadata=self._metadata
+        )
         if not results:
             return self._reject("no_hit")
         if results[0].score < self._min_score:
             return self._reject("low_score")
 
+        ans = await self._call_llm(query, results)
+        if ans.has_answer or self._no_answer_retry <= 1:
+            return ans
+
+        retry_top_k = self._top_k * self._no_answer_retry
+        results_retry = self._rag.retrieve(
+            query, top_k=retry_top_k, metadata=self._metadata
+        )
+        if not results_retry:
+            return ans
+        if results_retry[0].score < self._min_score:
+            return ans
+        return await self._call_llm(query, results_retry)
+
+    async def _call_llm(
+        self,
+        query: str,
+        results: list[RetrievalResult],
+    ) -> RagAnswer:
+        """执行一次「LLM 调用 + 解析 + 引用校验」，产出有依据答案或拒答。"""
         messages = build_rag_messages(query, results, system_prompt=self._system_prompt)
         try:
             text = await self._chat(messages)
@@ -227,8 +308,7 @@ class RagGenerator:
             logger.warning("rag.answer parse_error=%s", exc)
             return self._reject("parse_error", raw=text)
 
-        valid_ids = {r.chunk_id for r in results}
-        valid = [c for c in parsed.citations if c.chunk_id in valid_ids]
+        valid = [c for c in (_validate_or_remap(c, results) for c in parsed.citations) if c is not None]
         if not parsed.has_answer:
             return self._reject("llm_no_answer", raw=text, citations=valid)
         if not valid:

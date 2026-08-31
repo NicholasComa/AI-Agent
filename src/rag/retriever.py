@@ -19,8 +19,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .embeddings import Embedder
-from .filters import MetadataConditions, build_filter
 from .ingestion import Chunk
+from .metadata_filter import MetadataConditions, build_filter
 
 if TYPE_CHECKING:
     from .qdrant_store import QdrantClient, QdrantConfig
@@ -141,6 +141,55 @@ class QdrantRetriever:
     @property
     def config(self) -> QdrantConfig:
         return self._config
+
+    def recreate(self) -> None:
+        """删除并重建当前集合（复用自身 client；供 ``--rebuild`` 使用）。
+
+        调用方通常还需要清空 BM25 等附加索引（``HybridRetriever.clear_index``）。
+        """
+        from .qdrant_store import recreate_collection
+
+        recreate_collection(self._client, self._config)
+
+    def load_chunks(self) -> list[Chunk]:
+        """从 Qdrant scroll 出全部点，重建为 :class:`Chunk` 列表。
+
+        用于「混合检索需要 BM25 索引但只跑问答不重导」的场景：从已写入的
+        向量库反推出 Chunks，再喂给 BM25；不依赖外部持久化文件。
+        """
+        offset: object = None
+        page_size = 256
+        chunks: list[Chunk] = []
+        while True:
+            records, offset = self._client.scroll(
+                collection_name=self._config.collection_name,
+                limit=page_size,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            for point in records:
+                payload = point.payload or {}
+                metadata: dict = {
+                    "chunk_index": payload.get("chunk_index", -1),
+                    "char_start": payload.get("char_start", -1),
+                }
+                for key, value in payload.items():
+                    if key in {"chunk_id", "source", "text", "chunk_index", "char_start"}:
+                        continue
+                    if key not in metadata:
+                        metadata[key] = value
+                chunks.append(
+                    Chunk(
+                        chunk_id=str(payload.get("chunk_id", point.id)),
+                        source=str(payload.get("source", "")),
+                        text=str(payload.get("text", "")),
+                        metadata=metadata,
+                    )
+                )
+            if offset is None or offset == 0:
+                break
+        return chunks
 
     def __len__(self) -> int:
         """返回当前集合中的点数量。"""

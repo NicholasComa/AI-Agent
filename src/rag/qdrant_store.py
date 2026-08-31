@@ -162,6 +162,32 @@ def ensure_collection(client: QdrantClient, cfg: QdrantConfig) -> None:
     )
 
 
+def recreate_collection(client: QdrantClient, cfg: QdrantConfig) -> None:
+    """删除并按 ``cfg`` 重建集合（用于 ``--rebuild`` 场景）。
+
+    与「先 ``ensure_collection`` 建、再 ``delete_collection`` 删」的时序相反，
+    本函数保证调用方拿到的是「集合不存在→重建」的原子语义，避免业务代码在
+    已构造的检索器上重复 ``upsert`` 时撞上 404。
+    """
+    try:
+        if client.collection_exists(cfg.collection_name):
+            client.delete_collection(cfg.collection_name)
+            logger.info("qdrant.collection.deleted name=%s", cfg.collection_name)
+    except qdrant_exceptions.UnexpectedResponse as exc:
+        msg = f"qdrant: failed to delete collection: {exc}"
+        raise QdrantConnectionError(msg) from exc
+    client.create_collection(
+        collection_name=cfg.collection_name,
+        vectors_config=VectorParams(size=cfg.vector_size, distance=cfg.distance),
+    )
+    logger.info(
+        "qdrant.collection.recreated name=%s vector_size=%d distance=%s",
+        cfg.collection_name,
+        cfg.vector_size,
+        cfg.distance.value,
+    )
+
+
 def upsert_points(
     client: QdrantClient,
     cfg: QdrantConfig,

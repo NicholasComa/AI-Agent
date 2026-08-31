@@ -8,10 +8,10 @@
 - 检索阶段复用 :class:`rag.retriever.QdrantRetriever`，只负责召回，
   不调用 LLM（生成在后续阶段实现）。
 
-检索增强为可选项：构造时可通过 ``retriever`` 注入自定义检索器
-（如 :class:`rag.hybrid.HybridRetriever` 混合检索），通过 ``reranker``
-注入精排器（如 :class:`rag.rerank.EmbeddingReranker`）；两者默认
-均为 ``None``，此时行为与纯向量检索完全一致。
+检索增强为可选项：:func:`build_retriever` 按 ``strategy`` 一键构造检索器
+（vector / hybrid / rerank / hybrid+rerank），也可通过 ``retriever`` /
+``reranker`` 参数注入自定义实现；两者默认均为 ``None``，此时行为与纯向量
+检索完全一致。
 
 本模块不引入新的向量化或存储实现，仅组合既有组件，保持职责分离。
 """
@@ -25,9 +25,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .embeddings import DEFAULT_DIM, FakeEmbedding, get_embedding
-from .filters import MetadataConditions
+from .hybrid_search import BigramBM25, HybridRetriever, RerankRetriever
 from .ingestion import Chunk, build_chunks
-from .qdrant_store import QdrantConfig, connect
+from .metadata_filter import MetadataConditions
+from .qdrant_store import QdrantConfig
+from .rerank import EmbeddingReranker
 from .retriever import QdrantRetriever, RetrievalResult
 
 if TYPE_CHECKING:
@@ -39,6 +41,52 @@ logger = logging.getLogger(__name__)
 
 _TEXT_SUFFIXES = {".md", ".markdown", ".txt"}
 _PDF_SUFFIXES = {".pdf"}
+
+RETRIEVAL_STRATEGIES = ("vector", "hybrid", "rerank", "hybrid+rerank")
+"""检索策略取值：``vector`` 纯向量；``hybrid`` 向量+BM25 RRF；
+``rerank`` 粗召回+精排；``hybrid+rerank`` 混合召回后再精排。"""
+
+
+def build_retriever(
+    embedder: FakeEmbedding | object,
+    config: QdrantConfig,
+    client: object | None = None,
+    *,
+    strategy: str = "vector",
+    coarse_top_k: int = 20,
+    top_candidates: int = 30,
+) -> QdrantRetriever | HybridRetriever | RerankRetriever:
+    """按策略构造检索器，统一出口供脚本与生成链路选择检索方式。
+
+    Args:
+        embedder: Embedding 客户端（真实或离线 Fake）。
+        config: Qdrant 集合配置。
+        client: 可选已建连的 QdrantClient（测试注入用）。
+        strategy: ``vector`` / ``hybrid`` / ``rerank`` / ``hybrid+rerank``。
+        coarse_top_k: 精排前粗召回条数（仅含精排的策略生效）。
+        top_candidates: 混合检索每路候选条数（仅含混合的策略生效）。
+
+    Returns:
+        实现 ``index(chunks)`` / ``__len__`` /
+        ``search(query, top_k, *, source_filter, metadata)`` 的检索器，
+        可直接注入 :class:`JwipcKnowledgeRAG`（``retriever=`` 参数）。
+    """
+    if strategy not in RETRIEVAL_STRATEGIES:
+        msg = f"unknown strategy: {strategy!r} (expected one of {RETRIEVAL_STRATEGIES})"
+        raise ValueError(msg)
+    vector = QdrantRetriever(embedder, config, client)  # type: ignore[arg-type]
+    if strategy == "vector":
+        return vector
+    if strategy == "hybrid":
+        return HybridRetriever(vector, BigramBM25(), top_candidates=top_candidates)
+    reranker = EmbeddingReranker(embedder)  # type: ignore[arg-type]
+    if strategy == "rerank":
+        return RerankRetriever(vector, reranker, coarse_top_k=coarse_top_k)
+    return RerankRetriever(
+        HybridRetriever(vector, BigramBM25(), top_candidates=top_candidates),
+        reranker,
+        coarse_top_k=coarse_top_k,
+    )
 
 
 class UnsupportedDocumentError(ValueError):
@@ -95,6 +143,15 @@ class JwipcKnowledgeRAG:
     @property
     def config(self) -> QdrantConfig:
         return self._config
+
+    @property
+    def retriever(self) -> object:
+        """当前使用的检索器（策略工厂产出的 vector / hybrid / rerank 包装）。
+
+        供评测等调用方直接复用已喂入数据的检索器（如
+        ``rag.evaluate(retriever=rag.retriever, ...)``）。
+        """
+        return self._retriever
 
     @property
     def chunk_size(self) -> int:
@@ -181,6 +238,21 @@ class JwipcKnowledgeRAG:
         """返回集合中已写入的片段数量。"""
         return len(self._retriever)
 
+    def rebuild(self) -> None:
+        """删除并重建当前集合（复用检索器自身的 client）。
+
+        与「先构造后删除」导致的 404 时序问题相反，本方法按「删→建」原子语义
+        调用 ``QdrantRetriever.recreate``，并清空下游混合检索的 BM25 索引，
+        保证重新导入时不被旧语料污染。本地（``:memory:``）与 Docker 模式行为一致。
+        """
+        from .hybrid_search import HybridRetriever
+        from .retriever import QdrantRetriever
+
+        if isinstance(self._retriever, QdrantRetriever):
+            self._retriever.recreate()
+        if isinstance(self._retriever, HybridRetriever):
+            self._retriever.clear_index()
+
 
 def build_qdrant_config(collection_name: str, embedder: object) -> QdrantConfig:
     """根据环境变量构造 Qdrant 配置，便于不修改代码切换 local / docker 模式。
@@ -221,13 +293,9 @@ def main(argv: list[str] | None = None) -> int:
 
     embedder = get_embedding()
     cfg = build_qdrant_config(args.collection, embedder)
-    if args.rebuild:
-        client = connect(cfg)
-        if client.collection_exists(cfg.collection_name):
-            client.delete_collection(cfg.collection_name)
-            logger.info("qdrant.collection.deleted name=%s", cfg.collection_name)
-
     rag = JwipcKnowledgeRAG(embedder, cfg, chunk_size=args.chunk_size, overlap=args.overlap)
+    if args.rebuild:
+        rag.rebuild()
     target = Path(args.ingest)
     chunks = rag.add_directory(target) if target.is_dir() else rag.add_document(target)
     print(
