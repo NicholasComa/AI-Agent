@@ -75,21 +75,24 @@ src/rag_api.py  POST /rag/query  (QueryReq extra=forbid → RagAnswer)
 
 | Commit | 日期 | 说明 |
 | -------- | -------- | -------- |
-| `5579293` | 08-28 | func: app: Add weekly task summary document                                          |
-| `22cbb9a` | 08-28 | docs: app: Update parameter comparison report                                       |
-| `3b3851e` | 08-28 | func: app: Add RAG enhancement script and update parameter comparison script        |
-| `56f312b` | 08-28 | func: app: Add unit tests for rag enhancement modules                               |
-| `3e76d8b` | 08-28 | func: app: Add metadata filter, hybrid search and rerank into src/rag               |
-| `7556992` | 08-27 | func: app: Add relevant functional test cases                                     |
-| `5ab2d52` | 08-27 | func: app: Add Q\&A test set and RAG API service                                  |
-| `b56598b` | 08-27 | fix: app: Re-completed ruff formatting                                            |
-| `59472a8` | 08-26 | docs: app: Add parameter comparison report for chunk_size and TopK evaluation     |
-| `348d91f` | 08-26 | func: app: Add rag_week6_param_compare.py for parameter grid evaluation           |
-| `4da11de` | 08-25 | func: app: Add RagGenerator for retrieval-augmented generation and test cases     |
-| `2c88173` | 08-25 | func: app: Add scripts for JwipcKnowledgeRAG Q\&A entry and ingestion process     |
-| `9535d2c` | 08-25 | func: app: Enhance PDF parsing and add unit tests for document ingestion          |
 | `417ffbf` | 08-25 | func: app: Add multi-format document ingestion and vector retrieval orchestration |
-
+| `9535d2c` | 08-25 | func: app: Enhance PDF parsing and add unit tests for document ingestion |
+| `2c88173` | 08-25 | func: app: Add scripts for JwipcKnowledgeRAG Q\&A entry and ingestion process |
+| `4da11de` | 08-25 | func: app: Add RagGenerator for retrieval-augmented generation and test cases |
+| `348d91f` | 08-26 | func: app: Add rag_week6_param_compare.py for parameter grid evaluation of chunk_size and TopK |
+| `59472a8` | 08-26 | docs: app: Add parameter comparison report for chunk_size and TopK evaluation |
+| `b56598b` | 08-27 | fix: app: Re-completed ruff formatting |
+| `5ab2d52` | 08-27 | func: app: Add Q\&A test set and RAG API service |
+| `7556992` | 08-27 | func: app: Add relevant functional test cases |
+| `3e76d8b` | 08-28 | func: app: Add metadata filter, hybrid search and rerank into src/rag |
+| `56f312b` | 08-28 | func: app: Add unit tests for rag enhancement modules |
+| `3b3851e` | 08-28 | func: app: Add RAG enhancement script and update parameter comparison script |
+| `22cbb9a` | 08-28 | docs: app: Update parameter comparison report |
+| `45d0191` | 08-28 | docs: app: Update and supplement some content |
+| `5579293` | 08-28 | func: app: Add weekly task summary document |
+| `2523909` | 08-29 | docs: app: Update commit hashes in week06 summary |
+| `9765869` | 08-31 | docs: app: Add W06 knowledge base corpus |
+| `ebd3b21` | 08-31 | func: app: Refactor W06 RAG into src/rag and add quote validation |
 ---
 
 ## 5. 测试范围与结果
@@ -124,7 +127,7 @@ src/rag_api.py  POST /rag/query  (QueryReq extra=forbid → RagAnswer)
 - Metadata Filter 列为 Oracle Filter（用期望来源过滤），验证功能正确与召回上限，不代表生产行为；
 - 轻量精排与基线共用同一 Embedding 模型故 Recall 持平，延迟因逐条重打分显著上升；真·Cross-Encoder 占位待接入。
 
-> 实现位置：`src/rag/filters.py`（Metadata Filter）、`bm25.py`（字符 bigram 稀疏检索）、`rerank.py`（Embedding 轻量复排 + CrossEncoder 占位）、`hybrid.py`（混合检索 RRF 融合 + 精排适配）；`QdrantRetriever` 写库 payload 完整化并支持 `metadata` 过滤，`JwipcKnowledgeRAG` 构造可选注入 `retriever` / `reranker`（默认不启用，行为与纯向量一致）。
+> 实现位置：`src/rag/metadata_filter.py`（Metadata Filter）、`hybrid_search.py`（字符 bigram BM25 稀疏检索 + 混合检索 RRF 融合 + 精排适配）、`rerank.py`（Embedding 轻量复排 + CrossEncoder 占位）；`QdrantRetriever` 写库 payload 完整化并支持 `metadata` 过滤，`JwipcKnowledgeRAG` 通过 `build_retriever(strategy=...)` 一键选检索器（vector / hybrid / rerank / hybrid+rerank，默认不启用，行为与纯向量一致），`RagGenerator` 支持 `metadata=` 过滤透传。
 
 ---
 
@@ -137,6 +140,12 @@ src/rag_api.py  POST /rag/query  (QueryReq extra=forbid → RagAnswer)
 | 测试中文 FakeEmbedding 单字哈希导致相关查询余弦 < 0.3 | 逻辑用例与阈值耦合 | 逻辑用例显式 `min_score=0.0` 与阈值解耦；阈值行为用「英文库 + 中文查询」+ dim=1024 单独验证。 |
 | RAG API 启动失败 | ollama 服务无法启动，连接模型失败 | 重新配置将 ollama 模型存储地址配置正确 |
 | 检索增强：轻量精排真实链路延迟约 11s/20 条 | 每条 query 对粗召回候选（20 条）逐条重新 Embedding | 报告如实记录；真·Cross-Encoder 待接入（`CrossEncoderReranker` 占位） |
+| `--rebuild` 导入报 `404 Collection doesn't exist` | 集合只在 `QdrantRetriever.__init__` 建一次，脚本却在构造 RAG **之后**才删集合，写入路径不再检查集合 | 新增 `qdrant_store.recreate_collection` / `QdrantRetriever.recreate` / `JwipcKnowledgeRAG.rebuild`，按「删→建」原子语义并复用检索器自身 client（local 与 docker 行为一致）；`_ingest` 改调 `rag.rebuild()` |
+| 只 `--ask --strategy hybrid` 报 `BigramBM25 has no index` | BM25 索引只在导入时建立，纯问答进程内为空 | 新增 `QdrantRetriever.load_chunks()`（scroll 全量点反推 Chunk）；`HybridRetriever` 首次 `search` 自动重建 BM25，空集合时回退纯向量不报错 |
+| 混合检索结果的 `score` 是原路径原始分（BM25 动辄十几），`--min-score 0.3` 恒不触发 | RRF 融合分与余弦不同量纲，`search` 未回写统一分数 | `HybridRetriever.search` 排序仍用 RRF，但 `score` 回写为 `max(向量余弦, BM25归一化)`，统一到 0~1 阈值口径 |
+| 产品手册参数类问题（`VT1000 的输入电压和尺寸`）Top1 命中封面页（23 字符）却答不出 | 短文本向量密度高，封面页 / 图表标题这类零信息碎片余弦最高，挤占 Top-K | `parse_pdf` 增加 `min_chars`（默认 50）过滤页面碎片；噪声清除后参数片段从向量路第 9 名升至混合路第 3 名、`score=1.0`，`--top-k 3` 即可命中 |
+| 重复 `--ingest` 使 BM25 语料条目翻倍 | `BigramBM25.index` 直接覆盖列表，向量库按 ID 去重而 BM25 追加 | `BigramBM25` 改为 `dict[chunk_id, Chunk]` 存储 + 懒构建索引，`index` 按 chunk_id 覆盖合并；同时新增 `clear()` 供 `rebuild` 清空 |
+| 引用错位：`citations[].chunk_id` 指向 A 片段、`quote` 却是 B 片段原文（如 `#p6#1` 配了 `#p5` 的「输入电压」），溯源翻错页 | 引用白名单只校验 chunk_id 在召回集合内，未校验 quote 与该片段文本的从属关系 | `_validate_or_remap()`：quote 属于该片段原文 → 保留；quote 命中**其他**召回片段 → 视为模型标错，自动改挂到正确片段（保留证据、修正归属，日志记录 remap）；任何片段都匹配不上 → 丢弃；全部非法降级 `invalid_citations`。真实链路验证：错位的「输入电压」引用被改挂回 `#p5#0`，两条引用均可溯源 |
 
 ---
 
@@ -146,7 +155,8 @@ src/rag_api.py  POST /rag/query  (QueryReq extra=forbid → RagAnswer)
 - **人工验证**（本机真实链路：Ollama qwen3 + mxbai-embed-large @ Docker Qdrant）：
   - 拉起服务跑通 RAG 全链路——有答案带引用可溯源（confidence≈0.95）、无答案全部 `llm_no_answer` 拒答；RAG API（`POST /rag/query`）真实冒烟正常。
   - 参数对比脚本在真实环境复跑：确认 chunk_size 是 Recall 主因（600 最优 Recall@1=0.722），混合检索把 Recall@1 从 0.722 提升到 0.833，轻量精排与基线持平但延迟约 11s/20 条。
-  - `ruff` 与 `pytest`（全量 292 passed、ruff 全绿）在真实环境测试确认。
+  - `ruff` 与 `pytest`（全量 323 passed、ruff 全绿）在真实环境测试确认。
+  - 补充知识库文件（产品手册 PDF + 长篇 TXT）实跑：`--rebuild` 重建集合 51 片段无 404；`--strategy hybrid --top-k 5` 不带 `--ingest` 直接问答，BM25 索引自动从向量库重建；`--debug` 打印的召回明细确认参数片段（VT1000 规格表）以 `score=1.0` 进入 Top-3。
   - **环境配置问题（已解决）**：本机 Ollama 模型仓库在非默认 D 盘（`D:\Xsz\ollama`）。若 Ollama 设置里的 Model location 未指向该根目录、或误填子路径（如 `manifests\registry.ollama.ai\library`），会导致 `ollama list` 为空、API 报 `model not found`；修正为指向 `D:\Xsz\ollama` 根目录后正常。另 `localhost` 优先解析 IPv6 致 11434 端口串服务，统一用 `OLLAMA_HOST=0.0.0.0` 双栈绑定规避。
 
 ---
@@ -154,7 +164,10 @@ src/rag_api.py  POST /rag/query  (QueryReq extra=forbid → RagAnswer)
 ## 8. 当前未解决问题
 
 1. **检索层无拒答阈值**：无答案依赖生成层 `min_score`，检索层仍可能返回低分片段；可考虑检索层打分过滤或 Metadata Filter 缩小候选。
-2. **轻量精排延迟高**：`EmbeddingReranker` 对粗召回候选逐条重打分，真实链路约 11s/20 条；真·Cross-Encoder（需 sentence-transformers + HF 模型）仍未接入，`rag.rerank.CrossEncoderReranker` 为占位。
+2. **LlamaIndex未直接使用**：当前项目中未直接使用LlamaIndex及其相关组件，通过设计相似的程序进行了替代。
+3. **长文档单次向量化会超时**：`EmbeddingClient` 的 HTTP 超时为构造默认 30 秒（未接 `.env` 的 `TIMEOUT_SECONDS`），而 `QdrantRetriever.index` 把整个文件的片段一次性打包请求；实测 Ollama mxbai-embed-large 约 0.85 秒/条，单文件片段数超过约 32 条即超时（如《白鹿原》1506 条）。当前靠控制 chunk_size 与文件体量规避，后续需按批 embed + 逐批 upsert + 进度与断点续跑。
+4. **图文排版 PDF 的表格参数提取不到**：pypdf 只能拿到文字层，规格表 / 参数表若在图片或矢量排版中则无法检索，需 OCR 或换用表格提取库。
+5. **同一份产品手册含多机型规格时答案会漂移**：如 VT1000 用户手册内并存两组参数（`#p4` 为 19V DC IN，`#p5` 为 DC IN 12V / 249.83×168.43×38.95mm），问「VT1000 的输入电压」时答案取决于召回命中哪一段。需要在 Prompt 中要求模型核对「型号 + 参数」成对出现，或在切片时把机型标题与规格表绑定为同一片段。
 
 ---
 
@@ -208,7 +221,9 @@ uv run python -c "from rag.embeddings import get_embedding; print(get_embedding(
 ### 11.2 知识库导入（多格式 MD/TXT/PDF）
 
 ```bash
-uv run python scripts/rag_week6_ingest.py --data-dir data/raw
+uv run python scripts/rag_week6_ingest.py --ingest data/raw --collection jwipc_knowledge
+# 清空重建后导入
+uv run python scripts/rag_week6_ingest.py --ingest data/raw --collection jwipc_knowledge --rebuild
 ```
 
 预期：按扩展名分派解析器，写入 Qdrant 集合 `jwipc_knowledge`，打印片段数与导入耗时。
@@ -221,7 +236,7 @@ uv run python scripts/rag_week6_ingest.py --data-dir data/raw
 ### 11.3 检索增强生成问答（带引用 / 可拒答）
 
 ```bash
-uv run python scripts/rag_week6_qa.py --question "第5周的通过标准是什么？"
+uv run python scripts/rag_week6_qa.py --ingest data/raw --ask "第5周的通过标准是什么？"
 ```
 
 预期：有答案返回带引用片段（confidence≈0.95）；无答案问题返回「资料中未找到」并 `llm_no_answer` 拒答。
@@ -245,11 +260,73 @@ uv run python scripts/rag_week6_param_compare.py --chunk-sizes 300,600,900 --top
 
 ### 11.5 检索增强组件用法（Metadata Filter / 混合检索 / Rerank）
 
+统一入口为 `scripts/rag_week6_qa.py`：`--strategy` 选召回方式、`--metadata` 加过滤、`--ask` 提问题。下面所有示例基于你新增的 4 个知识库文件（均在 `data/raw/`：`VT1000用户手册-V1.0--2025.02.19.pdf`、`S102H&S102HT 中英文简易使用指南--Rev1.0--2023.10.10.pdf`、`「外国文学」《追风筝的人》…txt`、`诗经.txt`），集合名统一用 `jwipc_v3`。
+
+> 文件名含 `&` 与空格，但导入是按**目录**（`--ingest data/raw`）进行，不会触发 shell 解析问题，无需给文件名加引号。
+
+#### 前置：用新语料构建 / 重建集合（只做一次）
+
 ```bash
-uv run python scripts/rag_week6_usage.py
+uv run python scripts/rag_week6_qa.py --ingest data/raw --collection jwipc_v3 --chunk-size 800 --rebuild
 ```
 
-预期：终端打印四种检索配置（基线 / Metadata Filter / 混合检索 / Rerank）的召回结果与一段生成链路冒烟，退出码 0。
+#### 完整测试指令（基于真实文件）
+
+```bash
+# 混合检索问答（BM25 为空时首次 search 自动从向量库重建，无需带 --ingest）
+# 对应：VT1000用户手册 PDF
+uv run python scripts/rag_week6_qa.py --collection jwipc_v3 --ask "VT1000 的输入电压和尺寸是多少？" --strategy hybrid
+
+# 只从 PDF 召回（可与任意 --strategy 叠加）
+# 对应：S102H&S102HT 使用指南 PDF
+uv run python scripts/rag_week6_qa.py --collection jwipc_v3 --ask "S102H 支持哪些接口和硬件规格？" --metadata "file_type=pdf" --strategy hybrid
+# TXT 同理：--metadata "file_type=txt" 只查《追风筝的人》与《诗经》
+
+# 四种策略批量评测（vector / hybrid / rerank / hybrid+rerank，输出 Recall@K 表）
+uv run python scripts/rag_week6_qa.py --ingest data/raw --eval
+
+# 清空重建集合后重新导入（--rebuild 走 rag.rebuild()，先删后建）
+uv run python scripts/rag_week6_qa.py --ingest data/raw --collection jwipc_v3 --chunk-size 800 --rebuild
+
+# 拒答 / 引用异常时打印召回明细（chunk_id / score / 字符数）与 LLM 原始输出，便于排查
+# 对应：诗经.txt
+uv run python scripts/rag_week6_qa.py --collection jwipc_v3 --ask "《诗经》分为风、雅、颂哪几类，各有多少篇？" --strategy hybrid --debug
+
+# 关闭「LLM 判无答案 → top_k×2 重召再问一次」重试（省一次调用）
+# 对应：「外国文学」《追风筝的人》.txt
+uv run python scripts/rag_week6_qa.py --collection jwipc_v3 --ask "《追风筝的人》的作者是谁？讲述了什么故事？" --no-answer-retry 1
+
+# 重排序（在混合召回后精排，提升正确答案排序与引用准确度）
+uv run python scripts/rag_week6_qa.py --collection jwipc_v3 --ask "S102HT 与 S102H 有什么区别？" --strategy hybrid+rerank
+```
+
+四个文件各一条代表性问答（快速验证召回命中）：
+
+```bash
+uv run python scripts/rag_week6_qa.py --collection jwipc_v3 --ask "VT1000 的电源接口和供电规格是什么？" --strategy hybrid
+uv run python scripts/rag_week6_qa.py --collection jwipc_v3 --ask "S102HT 与 S102H 有什么区别？" --strategy hybrid
+uv run python scripts/rag_week6_qa.py --collection jwipc_v3 --ask "《追风筝的人》的主要人物和情节是什么？" --strategy hybrid
+uv run python scripts/rag_week6_qa.py --collection jwipc_v3 --ask "《诗经》共有多少篇？" --strategy hybrid
+```
+
+#### 指令调用说明（什么情况用什么）
+
+| 你想做什么 | 用哪些参数 | 说明 |
+|---|---|---|
+| 快速问答，问题表述和原文接近 | 默认即可（`--strategy vector` 可省略） | 纯向量召回，速度最快 |
+| 问题含专有名词 / 型号 / 缩写，纯向量答不准 | `--strategy hybrid` | 向量 + BM25 互补，救回术语类漏召 |
+| 只查某类文件（缩小范围） | `--metadata "file_type=pdf"` 或 `file_type=txt` | 可叠加任意 `--strategy` |
+| 召回条数多、正确答案排不到最前、引用不准 | `--strategy rerank` 或 `--strategy hybrid+rerank` | rerank 在召回后精排；`hybrid+rerank` = 混合召回再精排 |
+| 答不上来 / 引用错位，想看召回细节 | `--debug` | 打印每次召回的 score / len / chunk_id 与 LLM 原始输出 |
+| 确认会拒答、想省一次 LLM 调用 | `--no-answer-retry 1` | 关闭「无答案 → 扩召回重试」 |
+| 语料有变动 / 首次导入 | `--ingest data/raw --rebuild` | 先删后建，重建集合 |
+| 对比四种策略效果 | `--ingest data/raw --eval` | 输出 Recall@1/3/5 表 |
+
+行为约定：
+
+1. **混合检索的 BM25 索引按需重建**：导入时写入；对已有集合单独提问时，首次 `search` 会从 Qdrant scroll 出全部点反推语料重建（仅 hybrid / hybrid+rerank 生效），无需重跑 `--ingest`。
+2. **混合检索的 `score` 为 0~1 阈值口径**：排序仍由 RRF 决定，但返回的 `score` 取「向量余弦 / BM25 归一化分」的较大值，使 `--min-score` 在混合模式下按与纯向量一致的语义生效。
+3. **生成侧拒答重试**：LLM 首判 `has_answer=false` 时用 `top_k × 2` 重新召回再问一次（`--no-answer-retry`，默认 2，传 1 关闭），仍无答案才拒答。第二轮提示词更大，资源紧张的环境可用 `--no-answer-retry 1` 关闭。
 
 ### 11.6 RAG API 冒烟
 

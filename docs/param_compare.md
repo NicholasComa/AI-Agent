@@ -83,12 +83,13 @@
 
 - 概念：在向量检索的同时按 Payload 元数据（source / 日期 / 类别 / 章节等）加过滤条件，缩小候选范围。
 - 适用场景：知识库按来源或主题分域（如不同部门资料），查询可先限定域再检索。
-- 实现：`src/rag/filters.py`（`build_filter` / `source_is` / `file_type_is`）+ `QdrantRetriever.search(metadata=...)`；写库时 payload 保留完整元数据（`file_type` / `page` 不再丢弃）。本项目 `source_filter` 精确过滤是特例，可与之 AND 合并。
+- 实现：`src/rag/metadata_filter.py`（`build_filter` / `source_is` / `file_type_is`）+ `QdrantRetriever.search(metadata=...)`；写库时 payload 保留完整元数据（`file_type` / `page` 不再丢弃）。本项目 `source_filter` 精确过滤是特例，可与之 AND 合并。生成链路可通过 `RagGenerator(..., metadata=...)` 直接使用。
 ### 4.2 混合检索（Hybrid Search）
 
 - 概念：向量语义检索（mxbai-embed-large）+ 关键词稀疏检索（BM25 等）双路召回，用 RRF（Reciprocal Rank Fusion）或加权合并排序。
 - 适用场景：含专有名词、编号、精确术语的查询（如 `Recall@K`、`QDRANT_MODE`），向量检索易丢精确匹配，BM25 可补位；两端互补通常能显著提升 Recall@1。
-- 实现：`src/rag/bm25.py`（字符 bigram `BigramBM25`，不引入分词器）+ `src/rag/hybrid.py`（`HybridRetriever`，向量路与 BM25 路各取 Top-30，RRF k=60 融合）。
+- 实现：`src/rag/hybrid_search.py`（字符 bigram `BigramBM25`，不引入分词器；`HybridRetriever`，向量路与 BM25 路各取 Top-30，RRF k=60 融合）。
+- 工程约定：BM25 索引按 `chunk_id` 覆盖合并（重复导入不翻倍），且首次 `search` 时若索引为空会自动从向量库 scroll 出全量点重建，因此「已导入的库直接换 hybrid 提问」无需重跑导入；排序仍由 RRF 决定，但返回的 `score` 回写为 `max(向量余弦, BM25 归一化)`，与生成阶段 `min_score`（0~1）阈值口径一致。
 ### 4.3 Rerank（精排）
 
 - 概念：召回 Top-K（如 20~50 条）后用 Cross-Encoder 逐条与 query 打分重排，只把最相关的少量片段（如 3~5 条）交给生成。
@@ -110,5 +111,5 @@
   - **混合检索 Recall@1 0.722 → 0.833（+0.111）**，Recall@5 达 1.000；BM25 以专有名词补位，救回 §三 中「第 5 周通过标准」那条 Embedding 表达不足（0.6316 < 0.6636）的未命中。
   - Metadata Filter 列为 Oracle Filter（用期望来源过滤），仅验证过滤功能正确与召回上限，不代表生产行为；生产用法是先按业务元数据（来源/类型/章节）限定域再检索。
   - 轻量精排与向量基线共用同一 Embedding 模型，Recall 持平；代价是每条查询对粗召回 20 条重新打分，真实链路延迟约 11s/20 条。价值在扩大粗召回范围，真·Cross-Encoder 精排为后续接入项（`CrossEncoderReranker` 占位）。
-- 编排方式（可选、默认关闭）：`JwipcKnowledgeRAG(..., retriever=HybridRetriever(...))` 启用混合检索；`JwipcKnowledgeRAG(..., reranker=EmbeddingReranker(emb))` 启用精排；`retrieve(..., metadata=...)` 启用元数据过滤。默认不传即原纯向量行为。
-- LlamaIndex 对照（Roadmap 必学③，本项目未引入库）：Reader ↔ `rag.pdf_reader` / `rag.ingestion`；Index ↔ `rag.embeddings` / `rag.qdrant_store`；Retriever ↔ `rag.retriever` / `rag.hybrid`；Query Engine ↔ `rag.generator`。主线以手写实现等价覆盖组件职责。
+- 编排方式（可选、默认关闭）：统一出口两处——构造期用 `build_retriever(embedder, cfg, strategy=...)` 一键选 `vector / hybrid / rerank / hybrid+rerank` 后注入 `JwipcKnowledgeRAG(retriever=...)`；查询期用 `RagGenerator(..., metadata=...)` 或 `retrieve(..., metadata=...)` 启用元数据过滤。默认不传即原纯向量行为。脚本入口统一为 `scripts/rag_week6_qa.py`（`--strategy` / `--metadata` / `--eval`）。
+- LlamaIndex 对照（Roadmap 必学项，本项目未引入库）：Reader ↔ `rag.pdf_reader` / `rag.ingestion`；Index ↔ `rag.embeddings` / `rag.qdrant_store`；Retriever ↔ `rag.retriever` / `rag.hybrid_search`；Query Engine ↔ `rag.generator`。主线以手写实现等价覆盖组件职责。
