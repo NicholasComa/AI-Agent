@@ -178,7 +178,9 @@ def _validate_or_remap(citation: Citation, results: list[RetrievalResult]) -> Ci
                 citation.chunk_id,
                 result.chunk_id,
             )
-            return citation.model_copy(update={"chunk_id": result.chunk_id, "source": result.source})
+            return citation.model_copy(
+                update={"chunk_id": result.chunk_id, "source": result.source}
+            )
     return None
 
 
@@ -267,9 +269,7 @@ class RagGenerator:
         ``no_answer_retry > 1``，用 ``top_k × 倍率`` 重召再问一次，仍无答案
         才拒答（拒答文案/原因与一次到位一致）。
         """
-        results = self._rag.retrieve(
-            query, top_k=self._top_k, metadata=self._metadata
-        )
+        results = self._rag.retrieve(query, top_k=self._top_k, metadata=self._metadata)
         if not results:
             return self._reject("no_hit")
         if results[0].score < self._min_score:
@@ -280,9 +280,7 @@ class RagGenerator:
             return ans
 
         retry_top_k = self._top_k * self._no_answer_retry
-        results_retry = self._rag.retrieve(
-            query, top_k=retry_top_k, metadata=self._metadata
-        )
+        results_retry = self._rag.retrieve(query, top_k=retry_top_k, metadata=self._metadata)
         if not results_retry:
             return ans
         if results_retry[0].score < self._min_score:
@@ -308,7 +306,9 @@ class RagGenerator:
             logger.warning("rag.answer parse_error=%s", exc)
             return self._reject("parse_error", raw=text)
 
-        valid = [c for c in (_validate_or_remap(c, results) for c in parsed.citations) if c is not None]
+        valid = [
+            c for c in (_validate_or_remap(c, results) for c in parsed.citations) if c is not None
+        ]
         if not parsed.has_answer:
             return self._reject("llm_no_answer", raw=text, citations=valid)
         if not valid:

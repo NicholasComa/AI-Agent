@@ -186,7 +186,11 @@ async def test_no_answer_retries_with_double_topk(embedder: FakeEmbedding, tmp_p
     rag = _make_rag(
         embedder,
         tmp_path,
-        [("a.md", DOC_ZH), ("b.md", DOC_ZH + " 补充第二段内容。"), ("c.md", DOC_ZH + " 第三段内容。")],
+        [
+            ("a.md", DOC_ZH),
+            ("b.md", DOC_ZH + " 补充第二段内容。"),
+            ("c.md", DOC_ZH + " 第三段内容。"),
+        ],
     )
     no_payload = {"answer": "", "has_answer": False, "citations": [], "confidence": 0.05}
     ref_counts: list[int] = []
@@ -290,7 +294,9 @@ async def test_reject_when_all_citations_invalid(rag: JwipcKnowledgeRAG) -> None
     assert ans.answer == NO_ANSWER_TEXT
 
 
-async def test_remapped_citation_to_chunk_containing_quote(embedder: FakeEmbedding, tmp_path) -> None:
+async def test_remapped_citation_to_chunk_containing_quote(
+    embedder: FakeEmbedding, tmp_path
+) -> None:
     """引用校验：chunk_id 标错但 quote 确有出处时，改挂到真正包含原文的片段。"""
     docs = [
         ("a.md", "Qdrant 是向量数据库，支持语义检索与 Payload 过滤。"),

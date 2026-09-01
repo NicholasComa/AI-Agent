@@ -202,7 +202,11 @@ def _run_eval(args, embedder) -> int:
     for strategy in RETRIEVAL_STRATEGIES:
         collection = f"{args.collection}_eval_{strategy.replace('+', '_')}"
         rag = _build_rag(
-            embedder, collection, strategy=strategy, chunk_size=args.chunk_size, overlap=args.overlap
+            embedder,
+            collection,
+            strategy=strategy,
+            chunk_size=args.chunk_size,
+            overlap=args.overlap,
         )
         if args.rebuild:
             rag.rebuild()
@@ -228,8 +232,7 @@ def _run_eval(args, embedder) -> int:
             }
         )
         print(
-            f"eval done: strategy={strategy} chunks={len(chunks)} "
-            f"recall@5={summary.recall[5]:.3f}"
+            f"eval done: strategy={strategy} chunks={len(chunks)} recall@5={summary.recall[5]:.3f}"
         )
 
     header = (
@@ -252,8 +255,9 @@ def _run_eval(args, embedder) -> int:
         f"- 评测集：{args.eval_set}（{len(items)} 条）；语料：{data_dir}；"
         f"Embedding：{type(embedder).__name__}"
     )
-    lines.append("- 与 docs/param_compare.md 同口径：Recall@K 由前 5 名排序统计，"
-                 "与请求 TopK 无关。")
+    lines.append(
+        "- 与 docs/param_compare.md 同口径：Recall@K 由前 5 名排序统计，与请求 TopK 无关。"
+    )
 
     if args.report:
         report = Path(args.report)
