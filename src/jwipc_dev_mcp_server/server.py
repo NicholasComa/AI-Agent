@@ -18,6 +18,9 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field
 
+from .config import McpServerConfig
+from .tools import register_tools
+
 SERVER_NAME = "jwipc-dev-mcp-server"
 """向客户端上报的服务标识，对应 ``serverInfo.name``。"""
 
@@ -36,13 +39,15 @@ def build_server(
     *,
     host: str = "127.0.0.1",
     port: int = 8765,
+    config: McpServerConfig | None = None,
 ) -> FastMCP:
-    """构建并注册了 ping 工具的 MCP 服务。
+    """构建 MCP 服务：ping 连通性检查 + 沙箱开发工具集。
 
     Args:
         host: Streamable HTTP 传输方式的绑定地址（v1 把 host/port 放在
             构造函数上，而不是 :meth:`FastMCP.run` 里）。
         port: Streamable HTTP 传输方式的绑定端口。
+        config: 沙箱与上限配置；缺省用 :class:`McpServerConfig` 的默认值。
 
     Returns:
         一个配置好的 :class:`FastMCP` 实例；调用 ``run(transport=...)``
@@ -68,6 +73,7 @@ def build_server(
         """确认服务可达且会话已完成初始化。"""
         return PingResult(server=SERVER_NAME)
 
+    register_tools(mcp, config or McpServerConfig())
     return mcp
 
 

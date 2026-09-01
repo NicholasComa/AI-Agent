@@ -106,3 +106,6 @@ obj/
 *.sdf
 # VS 预编译头
 ipch/
+
+# MCP 沙箱（含嵌套 git 仓库，属本地测试数据，不入库）
+data/mcp_sandbox/
