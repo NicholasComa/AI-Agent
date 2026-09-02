@@ -6,9 +6,9 @@ import os
 from contextlib import suppress
 from pathlib import Path
 
-DEFAULT_MAX_READ_BYTES = 50_000  #单次读取文件的最大字节数
-DEFAULT_LIST_LIMIT = 200  #默认返回的最大条目数
-DEFAULT_GIT_LOG_LIMIT = 20  #默认返回的最大提交数
+DEFAULT_MAX_READ_BYTES = 50_000  # 单次读取文件的最大字节数
+DEFAULT_LIST_LIMIT = 200  # 默认返回的最大条目数
+DEFAULT_GIT_LOG_LIMIT = 20  # 默认返回的最大提交数
 
 _ENV_PREFIX = "JWIPC_MCP_"
 _DEFAULT_ROOT = Path(__file__).resolve().parents[2] / "data" / "mcp_sandbox"
