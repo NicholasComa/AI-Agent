@@ -55,6 +55,9 @@ def test_symlink_escape_forbidden(tmp_path):
         (root / "link").symlink_to(outside, target_is_directory=True)
     except (OSError, NotImplementedError):
         pytest.skip("当前环境不允许创建符号链接")
+    if not (root / "link").is_symlink():
+        # 受限环境可能静默未创建链接（不抛异常但链接不存在），同样跳过
+        pytest.skip("符号链接未真正创建（受限环境）")
     box = SandboxRoot(root)
     with pytest.raises(SandboxError) as exc:
         box.resolve("link/secret.txt")
