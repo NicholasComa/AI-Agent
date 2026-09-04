@@ -1,7 +1,7 @@
 # AI Agent 应用开发
 
-> **第 1–5 周 · 工程基线 + 模型服务 + 单 Agent + Dify 工作流 + RAG 检索**
-> 「12 周 AI Agent 应用开发 Roadmap」前 5 周的落地工程。Week 1–3 建立可复现的工程环境与模型服务、单 Agent；Week 4 用 Dify 可视化工作流复现场景并对照代码版，由 FastAPI 统一包装；Week 5 落地 RAG 检索（解析 / 切分 / Embedding / Qdrant / Recall@K 评测），为第六周生产型 RAG 打底。
+> **第 1–7 周 · 工程基线 + 模型服务 + 单 Agent + Dify 工作流 + RAG 检索/闭环 + MCP 工具**
+> 「12 周 AI Agent 应用开发 Roadmap」的落地工程。Week 1–3 建立可复现的工程环境与模型服务、单 Agent；Week 4 用 Dify 可视化工作流复现场景并对照代码版，由 FastAPI 统一包装；Week 5–6 落地 RAG 检索与 RAG 应用闭环（解析 / 切分 / Embedding / Qdrant / Recall@K 评测 / 带引用可拒答的生成链路）；Week 7 把内部能力做成 MCP 标准工具（stdio + Streamable HTTP 双传输，路径/命令白名单 + 确认门三道安全闸）。
 
 ---
 
@@ -47,13 +47,30 @@
 - 评测：`examples/retrieval_set.json`（20 条人工标注）+ `scripts/rag_week5_eval.py`，真实环境 Recall@1=0.778 / @3=0.833 / @5=0.889。
 - 新增 RAG 相关测试（`test_rag_*`、`test_qdrant_store`、`test_embedding_client`、`test_dify_*` 之外的 rag 系列），全量 **259 passed**。
 
+**Week 6 · RAG 应用闭环（Day 26–30）**
+
+在 W5 检索底座上补齐「多格式知识库导入 → 检索增强生成（带引用/可拒答）→ RAG HTTP API → 30 条问答回归集 → chunk_size×TopK 参数网格评估」：`JwipcKnowledgeRAG`（PDF/MD/TXT 导入）、`RagGenerator`（双保险拒答 + 引用校验）、`src/rag_api.py`（`POST /rag/query`）；检索增强（Metadata Filter / 混合检索 BM25+RRF / 轻量精排）融合进 `src/rag/`（可选、默认关闭），真实链路混合检索 Recall@1 0.722→0.833。详见 `docs/week06_summary.md` 与 `docs/param_compare.md`。
+
+**Week 7 · MCP：把内部能力做成标准工具（Day 31–34）**
+
+理解 Host / Client / Server 与 JSON-RPC 2.0，开发安全、可描述、可复用的 MCP Tool（SDK 锁 `mcp==1.29.1`，规范 `2025-11-25`，不实现旧 HTTP+SSE）：
+
+- `src/jwipc_dev_mcp_server/`：`server.py`（FastMCP 装配 + `ping`）、`config.py`（沙箱与上限，`JWIPC_MCP_*` 环境变量）、`security.py`（三道闸）、`schemas.py`（出参模型，全 `extra="forbid"` + 统一 ok/error/kind 信封）、`tools.py`（4 工具 + `ToolAnnotations` 只读声明）、`client.py`（双传输客户端封装，stdio 与 Streamable HTTP）。
+- **4 个工具**：`list_files` / `read_file`（超 50KB 需确认、二进制拒绝）/ `git_log`（服务端固定拼装 argv + 白名单校验 + 15s 超时）/ `check_commit_message`（复用 Week 3 校验器）。
+- **三道安全闸**：`SandboxRoot` 路径白名单（拒 `..` 穿越/绝对路径/盘符/空字节/符号链接逃逸）、`GitCommandPolicy` 命令白名单（只读子命令 + 参数 allowlist）、`ConfirmationGate` 确认门（大文件二次确认）。
+- **双传输实测**：stdio（子进程 + 管道）与 Streamable HTTP（`http://127.0.0.1:8765/mcp`）全链路打通；stdio 下 stdout 专用于协议、日志走 stderr。
+- **业务串联**：`scripts/mcp_week7_review.py`「审查一次提交改动」——客户端编排 `git_log → check_commit_message → list_files → read_file`，输出结构化审查结论；`--demo-errors` 演示 3 异常场景（`forbidden` / `needs_confirmation` / `argument_rejected`）。
+- 新增 28 条 MCP 测试（15 工具 + 10 安全 + 3 双传输），全量 **350 passed, 1 skipped**；文档：`docs/week07_tools.md` / `docs/week07_security_report.md` / `docs/week07_summary.md`。
+
 **最终实现**
 
 - Week 1–2：一个 FastAPI 服务，暴露 5 个端点（健康检查、对话转发、流式对话、模型清单、结构化需求分析）；统一的错误信封（`ErrorBody`）；完整的 `request_id` 链路。
 - Week 3：`DevAssistantAgent`（`src/devagent/`）—— 单 Agent + 3 工具 + 2 中间件（追踪 + 兜底）+ 82 条测试；Agent Loop 四个终止条件（直接 final / 调工具→结果→final / 异常兜底 / recursion_limit 截断）。
 - Week 4：Dify 双工作流 DSL（`dify_workflows/`）+ `POST /dify/run` 通用透传端点 + `DifyWorkflowClient`；Dify 版与代码版对照报告。
 - Week 5：`src/rag/`（ingestion / embeddings / retriever / qdrant_store / evaluate / probes）+ 离线可跑的 RAG 评测框架，Recall@K 达标、五类未命中归因闭环。
-- 完整的测试验证：截至 Week 5，`ruff` 通过、`pytest` **259 条全部通过**。
+- Week 6：RAG 应用闭环——多格式导入、带引用可拒答的生成链路、`POST /rag/query`、30 条问答回归集、参数网格评估；检索增强融合进 `src/rag/`（可选）。
+- Week 7：`src/jwipc_dev_mcp_server/`（6 模块 MCP 包）+ 双传输客户端 + 业务流水线脚本 + 28 条 MCP 测试；三道安全闸（路径白名单 / 命令白名单 / 确认门）。
+- 完整的测试验证：截至 Week 7，`ruff` 通过、`pytest` **350 passed, 1 skipped**（skip 为 Windows 符号链接权限限制）。
 
 ---
 
@@ -92,15 +109,32 @@ week01_ai_basics/
 │   │       ├── calculator.py
 │   │       ├── read_text_file.py
 │   │       └── check_commit_message.py
-│   └── rag/                 # Week 5 RAG 检索（不含生成）
+│   ├── rag/                 # Week 5–6 RAG 检索与应用闭环
 │       ├── __init__.py
 │       ├── ingestion.py     # 文档加载、切分、metadata、chunk_id
 │       ├── embeddings.py     # EmbeddingClient / FakeEmbedding / get_embedding 工厂
 │       ├── retriever.py     # ListRetriever（离线兜底）+ QdrantRetriever（主链路）
 │       ├── qdrant_store.py   # QdrantConfig、connect、ensure_collection、upsert、search
 │       ├── evaluate.py       # load_dataset / evaluate Recall@K / diagnose_miss / write_report
-│       └── probes.py         # ChunkingProbe 临时集合对照实验（切分归因）
-├── tests/                   # pytest 测试（24 个文件，259 用例）
+│       ├── probes.py         # ChunkingProbe 临时集合对照实验（切分归因）
+│       ├── pdf_reader.py     # Week 6 pypdf 解析 + min_chars 碎片过滤
+│       ├── knowledge_rag.py  # Week 6 JwipcKnowledgeRAG 多格式导入编排
+│       ├── generator.py      # Week 6 RagGenerator 生成链路（引用校验 + 双保险拒答）
+│       ├── filters.py        # Week 6 Metadata Filter（可选增强）
+│       ├── bm25.py           # Week 6 BigramBM25 稀疏检索
+│       ├── rerank.py         # Week 6 轻量精排 / Cross-Encoder 占位
+│       └── hybrid.py         # Week 6 混合检索 RRF + RerankRetriever 适配
+│   └── jwipc_dev_mcp_server/  # Week 7 MCP 服务（stdio + Streamable HTTP）
+│       ├── __init__.py      # 导出 build_server / main / SERVER_NAME
+│       ├── server.py        # FastMCP 装配 + ping + 命令行入口（--transport/--host/--port）
+│       ├── config.py        # McpServerConfig 沙箱与上限（JWIPC_MCP_* 环境变量）
+│       ├── security.py      # SandboxRoot 路径白名单 / GitCommandPolicy 命令白名单 / ConfirmationGate
+│       ├── schemas.py       # 出参模型（ToolResult 信封 + tool_failure 统一错误）
+│       ├── tools.py         # list_files / read_file / git_log / check_commit_message
+│       └── client.py        # 双传输客户端封装（connect_stdio / connect_http）
+├── data/
+│   └── mcp_sandbox/         # Week 7 沙箱夹具（.gitignore 忽略，不入库）
+├── tests/                   # pytest 测试（32 个文件，350 用例 + 1 skip）
 │   ├── conftest.py                 # 全局 fixture（预留）
 │   ├── fake_models.py              # Week 3 测试假模型（FakeToolCapableChatModel）
 │   ├── test_config.py              # AppConfig 配置加载 / 字段校验 / env 隔离
@@ -122,7 +156,17 @@ week01_ai_basics/
 │   ├── test_rag_ingestion.py       # Week 5 文档加载 / 切分 / metadata
 │   ├── test_rag_retriever.py       # Week 5 ListRetriever / QdrantRetriever 检索
 │   ├── test_rag_evaluate.py        # Week 5 Recall@K / diagnose_miss 五类归因
-│   └── test_rag_probes.py          # Week 5 ChunkingProbe 对照实验与边界
+│   ├── test_rag_probes.py          # Week 5 ChunkingProbe 对照实验与边界
+│   ├── test_knowledge_rag.py       # Week 6 多格式导入 / PDF 解析
+│   ├── test_rag_generator.py       # Week 6 生成 + 拒答 + 引用校验
+│   ├── test_rag_qa_set.py          # Week 6 30 条问答集回归
+│   ├── test_rag_api.py             # Week 6 POST /rag/query 线协议
+│   ├── test_rag_hybrid_search.py   # Week 6 混合检索 RRF / BM25
+│   ├── test_rag_metadata_filter.py # Week 6 Metadata Filter
+│   ├── test_rag_rerank.py          # Week 6 轻量精排
+│   ├── test_mcp_server_tools.py    # Week 7 MCP 4 工具常规 + 边界（15 条）
+│   ├── test_mcp_security.py        # Week 7 SandboxRoot / GitCommandPolicy / ConfirmationGate（10 条）
+│   └── test_mcp_client.py          # Week 7 双传输客户端端到端（3 条）
 ├── examples/                # 真实 / 样本数据
 │   ├── requirement_samples.json    # 需求分析样本
 │   ├── structured_run_real.json    # 真实模型运行输出样本
@@ -133,7 +177,13 @@ week01_ai_basics/
 │   ├── call_dify_workflow.py  # Week 4 本机直连 Dify API 调用 / 校验
 │   ├── rag_week5_demo.py      # Week 5 RAG 检索 demo（离线 FakeEmbedding）
 │   ├── rag_week5_real_demo.py # Week 5 真实 Embedding + Docker Qdrant 闭环演示
-│   └── rag_week5_eval.py      # Week 5 Recall@K 评测（--show-results / --verbose / --offline）
+│   ├── rag_week5_eval.py      # Week 5 Recall@K 评测（--show-results / --verbose / --offline）
+│   ├── rag_week6_ingest.py    # Week 6 知识库导入 CLI（--rebuild 重建集合）
+│   ├── rag_week6_qa.py        # Week 6 问答 CLI（--strategy / --metadata / --debug / --eval）
+│   ├── rag_week6_param_compare.py  # Week 6 chunk_size × TopK 参数网格评估
+│   ├── mcp_week7_server.py    # Week 7 MCP 服务启动入口（--transport stdio|streamable-http）
+│   ├── mcp_week7_smoke.py     # Week 7 MCP 冒烟（list_tools + ping + 4 工具）
+│   └── mcp_week7_review.py    # Week 7 业务流水线「审查一次提交改动」（--demo-errors 演示异常）
 ├── dify_workflows/          # Week 4 导出的 Dify 工作流 DSL
 │   ├── DevAssistantAgent_Dify.yml   # Day 17 四分支工作流（calculator/check_commit/kb/chat）
 │   └── RequirementAnalysis_Dify.yml # Day 18 需求分析工作流
@@ -164,6 +214,12 @@ week01_ai_basics/
     ├── week04_summary.md    # 第 4 周阶段总结
     ├── week05_retrieval_eval.md  # Week 5 Recall@K 评测报告
     ├── week05_summary.md    # 第 5 周阶段总结
+    ├── week06_summary.md    # 第 6 周阶段总结
+    ├── param_compare.md     # Week 6 chunk_size × TopK 参数对比报告
+    ├── param_compare_offline.md  # Week 6 离线对照报告
+    ├── week07_tools.md      # Week 7 MCP 工具说明（入参/出参/行为/异常码）
+    ├── week07_security_report.md  # Week 7 安全测试报告（三道闸设计与实测）
+    ├── week07_summary.md    # 第 7 周阶段总结
     └── poho/                # 运行 / 测试截图（不入库）
 ```
 
@@ -394,7 +450,7 @@ curl -s -X POST http://127.0.0.1:8000/analyze-requirement \
 ## 7. 测试与质量
 
 ```bash
-# 全部测试（截至 Week 5 共 259 passed）
+# 全部测试（截至 Week 7 共 350 passed + 1 skipped）
 uv run pytest -q
 
 # 按模块运行（部分示例）
@@ -403,6 +459,9 @@ uv run pytest -v tests/test_streaming.py
 uv run pytest -v tests/test_atool_calling.py
 uv run pytest -v tests/test_dify_client.py tests/test_app_dify.py
 uv run pytest -v tests/test_rag_evaluate.py tests/test_rag_probes.py
+
+# 本周新增模块单测（MCP 28 条）
+uv run pytest -v tests/test_mcp_server_tools.py tests/test_mcp_security.py tests/test_mcp_client.py
 
 # 单个用例
 uv run pytest -v tests/test_api.py::test_chat_timeout_returns_504
@@ -415,7 +474,50 @@ uv run ruff format --check .
 curl http://127.0.0.1:8000/health
 ```
 
-**测试内容（24 个文件 / 259 用例）**
+### 7.1 新增模块运行指令
+
+**Week 5 · RAG 检索基础**
+
+```bash
+# 离线检索 demo（FakeEmbedding，无需 Qdrant）
+uv run python scripts/rag_week5_demo.py
+# 真实 Embedding + Docker Qdrant 闭环演示
+uv run python scripts/rag_week5_real_demo.py
+# Recall@K 评测（--offline 离线 / --show-results 打印明细 / --verbose）
+uv run python scripts/rag_week5_eval.py --offline
+uv run python scripts/rag_week5_eval.py --show-results
+```
+
+**Week 6 · RAG 应用闭环**
+
+```bash
+# 知识库导入（--rebuild 重建集合）
+uv run python scripts/rag_week6_ingest.py --rebuild
+# 问答 CLI（--strategy / --metadata / --debug / --eval）
+uv run python scripts/rag_week6_qa.py --strategy hybrid --eval
+# chunk_size × TopK 参数网格评估
+uv run python scripts/rag_week6_param_compare.py
+```
+
+**Week 7 · MCP 服务**
+
+```bash
+# 启动 Server（stdio 默认；streamable-http 需另开终端常驻，端口必须带 :8765）
+uv run python scripts/mcp_week7_server.py --transport stdio
+uv run python scripts/mcp_week7_server.py --transport streamable-http --port 8765
+
+# 冒烟（list_tools + ping + 4 工具，两种传输）
+uv run python scripts/mcp_week7_smoke.py --transport stdio
+uv run python scripts/mcp_week7_smoke.py --transport streamable-http
+
+# 业务流水线「审查一次提交改动」（stdio 默认；--repo 指定沙箱内仓库）
+uv run python scripts/mcp_week7_review.py
+uv run python scripts/mcp_week7_review.py --transport streamable-http
+# 演示 3 异常场景（越界 / 大文件未确认 / git 参数注入）
+uv run python scripts/mcp_week7_review.py --demo-errors
+```
+
+**测试内容（32 个文件 / 350 用例 + 1 skip）**
 
 | 测试文件 | 覆盖主题 | 关键验证点 |
 | --- | --- | --- |
@@ -439,6 +541,14 @@ curl http://127.0.0.1:8000/health
 | `test_rag_retriever.py` | Week 5 检索 | `ListRetriever` 离线相似度、`QdrantRetriever` 主链路返回 `chunk_id/source/score/text` |
 | `test_rag_evaluate.py` | Week 5 评测 | Recall@K 统计、五类未命中归因（过滤/解析/检索异常/TopK/Embedding 或切分）、`detail_out` |
 | `test_rag_probes.py` | Week 5 切分归因 | `ChunkingProbe` 临时集合对照、方案齐全、语义高分、空 paths/非法方案/维度不一致报错 |
+| `test_knowledge_rag.py` | Week 6 多格式导入 | MD/TXT/PDF 分派解析、`min_chars` 碎片过滤、Chunk 元数据 |
+| `test_rag_generator.py` | Week 6 生成链路 | 引用校验/改挂/降级、双保险拒答、阈值行为（dim=1024 单独验证） |
+| `test_rag_qa_set.py` | Week 6 问答集回归 | 30 条（20 found + 10 unfound）逐条断言与拒答契约 |
+| `test_rag_api.py` | Week 6 RAG API | `POST /rag/query` 线协议（ASGITransport）+ 拒答契约 |
+| `test_rag_hybrid_search.py` / `test_rag_metadata_filter.py` / `test_rag_rerank.py` | Week 6 检索增强 | BM25/RRF 融合、payload 过滤、精排适配与懒构建 |
+| `test_mcp_server_tools.py` | Week 7 MCP 工具 | 4 工具常规 + 边界（越界/不存在/目录/超限/二进制/确认后放行/截断/非仓库） |
+| `test_mcp_security.py` | Week 7 安全闸 | SandboxRoot 各类越界、GitCommandPolicy 注入拦截、ConfirmationGate 状态（symlink 用例 Windows skip） |
+| `test_mcp_client.py` | Week 7 双传输 | stdio 真实子进程全链路、Streamable HTTP ASGI 端到端、connect_http 工厂注入 |
 
 **测试架构要点**
 
@@ -459,3 +569,5 @@ curl http://127.0.0.1:8000/health
 | Week 1–3 | 2026-08 初 | 工程基线 + 模型服务（5 端点）+ 单 Agent（DevAssistantAgent，3 工具 2 中间件）；全量 **188 passed** | 初版 README：项目内容 / 目录结构 / 技术栈 / 环境 / 启动 / API / 测试（覆盖 Week 1–3） |
 | Week 4 | 2026-08-14 | Dify 双工作流 DSL（`dify_workflows/`）+ `POST /dify/run` 通用透传端点 + `DifyWorkflowClient`；Dify 版 vs 代码版对比报告；全量 **194 passed** | **未更新**（本周落档时遗漏 README 同步） |
 | Week 5 | 2026-08-20 | RAG 检索基础（`src/rag/`：ingestion / embeddings / retriever / qdrant_store / evaluate / probes）+ 离线可跑的 Recall@K 评测框架，五类未命中归因闭环；全量 **259 passed** | **本次更新**：补入 Week 4 + Week 5 内容——顶部概述、§1 项目内容（W4/W5 段落 + 最终实现）、§2 目录结构（新增 `src/rag`、`dify_client`、`tests` 新文件、`scripts` 新脚本、`examples/retrieval_set.json`、`dify_workflows/`、docs 新文档）、§3 技术栈（Qdrant / Embedding / Dify）、§6 API（6 端点，新增 `POST /dify/run`）、§7 测试（259 passed + 新增测试表行）、并新增本 §8 更新记录 |
+| Week 6 | 2026-08-20 ~ 08-31 | RAG 应用闭环（多格式导入 / RagGenerator 拒答引用 / `POST /rag/query` / 30 条问答集 / 参数网格）；检索增强融合进 `src/rag/`；全量 **319 passed** | **未更新**（本周落档时遗漏 README 同步，Week 7 更新时一并补齐 §1/§2/§8） |
+| Week 7 | 2026-08-31 ~ 09-02 | MCP 全链路（`src/jwipc_dev_mcp_server/` 6 模块 + 双传输客户端 + 冒烟/审查脚本 + 28 条 MCP 测试）；三道安全闸；全量 **350 passed, 1 skipped** | **本次更新**：顶部概述扩至 Week 7；§1 项目内容补 Week 6/Week 7 段落与最终实现；§2 目录结构补 `src/jwipc_dev_mcp_server/`、`data/mcp_sandbox/`、tests/scripts/docs 新文件；§8 补 Week 6/Week 7 两行 |
