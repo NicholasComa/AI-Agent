@@ -86,7 +86,7 @@ jwipc-dev-mcp-server（FastMCP，SDK 承担 JSON-RPC 2.0 解析 / initialize 握
   - `tests/test_mcp_client.py`（3 条）：stdio 真实子进程全链路、Streamable HTTP ASGI 端到端、`connect_http` 工厂注入。
 - **双传输实测**：stdio 与 Streamable HTTP（真实 uvicorn，端口 8765）各跑通冒烟 6 项 + 审查流水线 + 3 异常场景；HTTP 服务端日志可见完整会话生命周期（POST /mcp → SSE → DELETE 关会话）。
 
-### 3 异常场景实测返回（双链路一致）
+### 5.1 异常场景实测返回（双链路一致）
 
 | 场景 | 触发 | 返回 kind | 关键错误信息 |
 | --- | --- | --- | --- |
