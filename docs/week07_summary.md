@@ -52,7 +52,7 @@ jwipc-dev-mcp-server（FastMCP，SDK 承担 JSON-RPC 2.0 解析 / initialize 握
 
 | 模块 | 职责 |
 | --- | --- |
-| `src/jwipc_dev_mcp_server/server.py` | `build_server()` 装配 FastMCP 实例（host/port 在构造函数上）+ `ping` 工具；`main()` 命令行入口（`--transport stdio|streamable-http`、`--host`、`--port`）。日志走 stderr，stdout 留给协议。 |
+| `src/jwipc_dev_mcp_server/server.py` | `build_server()` 装配 FastMCP 实例（host/port 在构造函数上）+ `ping` 工具；`main()` 命令行入口（`--transport stdio / streamable-http`、`--host`、`--port`）。日志走 stderr，stdout 留给协议。 |
 | `src/jwipc_dev_mcp_server/config.py` | `McpServerConfig`：沙箱根目录、50KB 读取上限、列表/日志条数上限；支持 `JWIPC_MCP_*` 环境变量，非法取值回落默认。 |
 | `src/jwipc_dev_mcp_server/security.py` | `SandboxRoot`（路径白名单：拒绝对路径/盘符/`..`/空字节/符号链接逃逸）、`GitCommandPolicy`（git 只读子命令 + 参数白名单，先跳全局选项再定位子命令）、`ConfirmationGate`（进程内确认状态，confirm/revoke）。 |
 | `src/jwipc_dev_mcp_server/schemas.py` | 出参模型：公共信封 `ToolResult`（ok/error/kind 平铺）+ 6 个结果模型，全 `extra="forbid"`；`tool_failure()` 统一构造失败结果。SDK 依据模型自动生成 outputSchema。 |
