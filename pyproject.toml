@@ -8,6 +8,7 @@ dependencies = [
     "fastapi[standard]>=0.139.2",
     "httpx>=0.28.1",
     "langchain>=1.3.14",
+    "langgraph>=1.2.10",
     "mcp>=1.29,<2",
     "numpy>=2.5.2",
     "pydantic>=2.13.4",
@@ -67,6 +68,7 @@ ignore = [
 "scripts/rag_week6_param_compare.py" = ["E402"]  # bootstrap: must add src/ to sys.path before local imports
 "scripts/mcp_week7_server.py" = ["E402"]  # bootstrap: must add src/ to sys.path before local imports
 "scripts/mcp_week7_smoke.py" = ["E402"]  # bootstrap: must add src/ to sys.path before local imports
+"scripts/graph_week8_*.py" = ["E402"]  # bootstrap: must add src/ to sys.path before local imports
 
 [tool.ruff.format]
 quote-style = "double"
