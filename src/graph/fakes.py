@@ -77,6 +77,30 @@ def _classify_json(text: str) -> str:
             },
             ensure_ascii=False,
         )
+    # 含明确领域名词（系统/网站/平台/考勤等）视为真实需求，走正常路径
+    domain_words = (
+        "系统",
+        "网站",
+        "平台",
+        "应用",
+        "APP",
+        "小程序",
+        "管理",
+        "软件",
+        "工具",
+        "电商",
+        "考勤",
+    )
+    if any(key in text for key in domain_words):
+        return json.dumps(
+            {
+                "category": "web",
+                "confidence": 0.9,
+                "clarification_questions": [],
+                "title": "产品需求",
+            },
+            ensure_ascii=False,
+        )
     if len(text) < 25 or "我想做个东西" in text or "推荐东西" in text:
         return json.dumps(
             {
