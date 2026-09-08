@@ -65,6 +65,38 @@ def _extract_json(text: str) -> dict[str, Any]:
         return {}
 
 
+async def _call_chat_with_retry(
+    deps: Deps,
+    messages: list[dict[str, str]],
+    *,
+    node_name: str,
+    state: WorkflowState,
+) -> tuple[str | None, dict | None]:
+    """带重试地调用 chat_fn；重试耗尽仍失败时返回 (None, 错误记录)。
+
+    重试次数取 ``deps.config.max_retries``。任意一次成功即返回 (文本, None)；
+    全部尝试失败（网络/超时等瞬时或永久错误）则返回 (None, 错误条目)，
+    由调用节点产出降级结果并把条目追加进 ``errors``，使失败可定位可重试。
+
+    说明：生产节点采用此显式「重试 + 降级」模式，比 langgraph 内置
+    ``RetryPolicy`` 更稳健——``RetryPolicy`` 重试耗尽后会直接抛异常使整图崩溃，
+    而此模式在永久失败时仍能产出降级结果并继续后续节点。``RetryPolicy`` 作为
+    内置原语在 ``scripts/graph_week8_resilience.py`` 中单独演示。
+    """
+    last_exc: Exception | None = None
+    for _attempt in range(1, deps.config.max_retries + 1):
+        try:
+            return await deps.chat_fn(messages), None
+        except Exception as exc:  # 瞬时/永久失败：进入下一轮重试
+            last_exc = exc
+    return None, {
+        "node": node_name,
+        "type": type(last_exc).__name__,
+        "message": str(last_exc),
+        "attempts": deps.config.max_retries,
+    }
+
+
 async def classify(state: WorkflowState, *, deps: Deps) -> dict:
     """分类 + 置信度：复用 schemas.RequirementAnalysis 的字段作为输出契约。"""
     messages = [
@@ -79,7 +111,19 @@ async def classify(state: WorkflowState, *, deps: Deps) -> dict:
         },
         {"role": "user", "content": state["requirement_text"]},
     ]
-    raw = await deps.chat_fn(messages)
+    raw, error_entry = await _call_chat_with_retry(
+        deps, messages, node_name="classify", state=state
+    )
+    if raw is None:
+        # 降级：分类失败不应阻断图，也不应误触发人工澄清（系统错误非需求含糊）
+        return {
+            "category": "other",
+            "confidence": 0.0,
+            "clarification_questions": [],
+            "needs_clarify": False,
+            "errors": list(state.get("errors") or []) + [error_entry],
+            "trace": _trace(state) + ["classify"],
+        }
     obj = _extract_json(raw)
     confidence = float(obj.get("confidence", 0.0))
     confidence = max(0.0, min(1.0, confidence))
@@ -109,7 +153,15 @@ async def functional_points(state: WorkflowState, *, deps: Deps) -> dict:
         },
         {"role": "user", "content": user_content},
     ]
-    raw = await deps.chat_fn(messages)
+    raw, error_entry = await _call_chat_with_retry(
+        deps, messages, node_name="functional_points", state=state
+    )
+    if raw is None:
+        return {
+            "functional_points": [],
+            "errors": list(state.get("errors") or []) + [error_entry],
+            "trace": _trace(state) + ["functional_points"],
+        }
     obj = _extract_json(raw)
     return {
         "functional_points": list(obj.get("functional_points") or []),
@@ -169,7 +221,13 @@ async def risk(state: WorkflowState, *, deps: Deps) -> dict:
             "content": f"功能点：{state.get('functional_points') or []}\n检索资料：{state.get('rag_context') or []}",
         },
     ]
-    raw = await deps.chat_fn(messages)
+    raw, error_entry = await _call_chat_with_retry(deps, messages, node_name="risk", state=state)
+    if raw is None:
+        return {
+            "risks": ["内部资料检索不足，风险判断依据有限，仅供参考"],
+            "errors": list(state.get("errors") or []) + [error_entry],
+            "trace": _trace(state) + ["risk"],
+        }
     obj = _extract_json(raw)
     risks = list(obj.get("risks") or [])
     if state.get("rag_degraded"):
@@ -190,7 +248,15 @@ async def test_points(state: WorkflowState, *, deps: Deps) -> dict:
             "content": f"功能点：{state.get('functional_points') or []}\n风险：{state.get('risks') or []}",
         },
     ]
-    raw = await deps.chat_fn(messages)
+    raw, error_entry = await _call_chat_with_retry(
+        deps, messages, node_name="test_points", state=state
+    )
+    if raw is None:
+        return {
+            "test_points": [],
+            "errors": list(state.get("errors") or []) + [error_entry],
+            "trace": _trace(state) + ["test_points"],
+        }
     obj = _extract_json(raw)
     return {
         "test_points": list(obj.get("test_points") or []),
