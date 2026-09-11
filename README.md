@@ -1,7 +1,7 @@
 # AI Agent 应用开发
 
-> **第 1–7 周 · 工程基线 + 模型服务 + 单 Agent + Dify 工作流 + RAG 检索/闭环 + MCP 工具**
-> 「12 周 AI Agent 应用开发 Roadmap」的落地工程。Week 1–3 建立可复现的工程环境与模型服务、单 Agent；Week 4 用 Dify 可视化工作流复现场景并对照代码版，由 FastAPI 统一包装；Week 5–6 落地 RAG 检索与 RAG 应用闭环（解析 / 切分 / Embedding / Qdrant / Recall@K 评测 / 带引用可拒答的生成链路）；Week 7 把内部能力做成 MCP 标准工具（stdio + Streamable HTTP 双传输，路径/命令白名单 + 确认门三道安全闸）。
+> **第 1–8 周 · 工程基线 + 模型服务 + 单 Agent + Dify 工作流 + RAG 检索/闭环 + MCP 工具 + LangGraph 状态化工作流**
+> 「12 周 AI Agent 应用开发 Roadmap」的落地工程。Week 1–3 建立可复现的工程环境与模型服务、单 Agent；Week 4 用 Dify 可视化工作流复现场景并对照代码版，由 FastAPI 统一包装；Week 5–6 落地 RAG 检索与 RAG 应用闭环（解析 / 切分 / Embedding / Qdrant / Recall@K 评测 / 带引用可拒答的生成链路）；Week 7 把内部能力做成 MCP 标准工具（stdio + Streamable HTTP 双传输，路径/命令白名单 + 确认门三道安全闸）；Week 8 用 LangGraph 把需求分析拆成 6 节点状态图（分类 / 功能点 / 检索 / 风险 / 测试点 / 报告 + 歧义人工确认），具备重试、降级与 Checkpoint 续跑。
 
 ---
 
@@ -51,7 +51,7 @@
 
 在 W5 检索底座上补齐「多格式知识库导入 → 检索增强生成（带引用/可拒答）→ RAG HTTP API → 30 条问答回归集 → chunk_size×TopK 参数网格评估」：`JwipcKnowledgeRAG`（PDF/MD/TXT 导入）、`RagGenerator`（双保险拒答 + 引用校验）、`src/rag_api.py`（`POST /rag/query`）；检索增强（Metadata Filter / 混合检索 BM25+RRF / 轻量精排）融合进 `src/rag/`（可选、默认关闭），真实链路混合检索 Recall@1 0.722→0.833。详见 `docs/week06_summary.md` 与 `docs/param_compare.md`。
 
-**Week 7 · MCP：把内部能力做成标准工具（Day 31–34）**
+**Week 7 · MCP：把内部能力做成标准工具（Day 31–35）**
 
 理解 Host / Client / Server 与 JSON-RPC 2.0，开发安全、可描述、可复用的 MCP Tool（SDK 锁 `mcp==1.29.1`，规范 `2025-11-25`，不实现旧 HTTP+SSE）：
 
@@ -62,6 +62,17 @@
 - **业务串联**：`scripts/mcp_week7_review.py`「审查一次提交改动」——客户端编排 `git_log → check_commit_message → list_files → read_file`，输出结构化审查结论；`--demo-errors` 演示 3 异常场景（`forbidden` / `needs_confirmation` / `argument_rejected`）。
 - 新增 28 条 MCP 测试（15 工具 + 10 安全 + 3 双传输），全量 **350 passed, 1 skipped**；文档：`docs/week07_tools.md` / `docs/week07_security_report.md` / `docs/week07_summary.md`。
 
+**Week 8 · LangGraph 状态化工作流（09-07 ~ 09-11）**
+
+把复杂任务从一个 Prompt 拆成可观察、可重试、可恢复的状态图，新增 `src/graph/` 包：
+
+- **状态 Schema**：`WorkflowState`（`TypedDict`，`total=False`）——15 个字段，节点只回写自己负责的局部 patch，并把节点名追加进 `trace`，执行路径直接从状态读出。
+- **6 业务节点 + 1 澄清节点**：`classify` → `functional_points` → `rag_retrieve` → `risk` → `test_points` → `report`；歧义时经条件边进 `clarify`，由 `interrupt()` 挂起，人工补充后用 `Command(resume=...)` 从挂起点续跑。
+- **重试与降级**：LLM 节点统一走 `_call_chat_with_retry`（重试 `max_retries` 次），耗尽则写 `errors`（node / type / message / attempts）并降级产出，**图继续跑到 report**。未直接挂 langgraph 内置 `RetryPolicy`——它只对网络类错误重试，且耗尽后抛异常使整图崩溃。
+- **Checkpoint**：默认 `InMemorySaver`，按 `thread_id` 隔离；跨进程持久化需额外装 `langgraph-checkpoint-sqlite`。
+- **业务串联**：`scripts/graph_week8_demo.py` 覆盖 1 正常 + 3 异常（歧义暂停 / 依赖降级 / 节点失败），`--real` 接真实 Ollama + Qdrant，不可用时自动回退 Fake。
+- 新增 24 条图相关测试（3 冒烟 + 16 流程 + 5 韧性），全量 **374 passed, 1 skipped**；文档：`docs/week08_architecture.md` / `docs/week08_state_fields.md` / `docs/week08_summary.md`。
+
 **最终实现**
 
 - Week 1–2：一个 FastAPI 服务，暴露 5 个端点（健康检查、对话转发、流式对话、模型清单、结构化需求分析）；统一的错误信封（`ErrorBody`）；完整的 `request_id` 链路。
@@ -70,7 +81,8 @@
 - Week 5：`src/rag/`（ingestion / embeddings / retriever / qdrant_store / evaluate / probes）+ 离线可跑的 RAG 评测框架，Recall@K 达标、五类未命中归因闭环。
 - Week 6：RAG 应用闭环——多格式导入、带引用可拒答的生成链路、`POST /rag/query`、30 条问答回归集、参数网格评估；检索增强融合进 `src/rag/`（可选）。
 - Week 7：`src/jwipc_dev_mcp_server/`（6 模块 MCP 包）+ 双传输客户端 + 业务流水线脚本 + 28 条 MCP 测试；三道安全闸（路径白名单 / 命令白名单 / 确认门）。
-- 完整的测试验证：截至 Week 7，`ruff` 通过、`pytest` **350 passed, 1 skipped**（skip 为 Windows 符号链接权限限制）。
+- Week 8：`src/graph/`（6 模块 LangGraph 包）+ 6 业务节点与 1 个澄清中断节点 + 4 个演示脚本 + 24 条图相关测试；重试降级、Checkpoint 续跑、人工确认闭环。
+- 完整的测试验证：截至 Week 8，`ruff` 通过、`pytest` **374 passed, 1 skipped**（skip 为 Windows 符号链接权限限制）。
 
 ---
 
@@ -124,17 +136,25 @@ week01_ai_basics/
 │       ├── bm25.py           # Week 6 BigramBM25 稀疏检索
 │       ├── rerank.py         # Week 6 轻量精排 / Cross-Encoder 占位
 │       └── hybrid.py         # Week 6 混合检索 RRF + RerankRetriever 适配
-│   └── jwipc_dev_mcp_server/  # Week 7 MCP 服务（stdio + Streamable HTTP）
-│       ├── __init__.py      # 导出 build_server / main / SERVER_NAME
-│       ├── server.py        # FastMCP 装配 + ping + 命令行入口（--transport/--host/--port）
-│       ├── config.py        # McpServerConfig 沙箱与上限（JWIPC_MCP_* 环境变量）
-│       ├── security.py      # SandboxRoot 路径白名单 / GitCommandPolicy 命令白名单 / ConfirmationGate
-│       ├── schemas.py       # 出参模型（ToolResult 信封 + tool_failure 统一错误）
-│       ├── tools.py         # list_files / read_file / git_log / check_commit_message
-│       └── client.py        # 双传输客户端封装（connect_stdio / connect_http）
+│   ├── jwipc_dev_mcp_server/  # Week 7 MCP 服务（stdio + Streamable HTTP）
+│   │   ├── __init__.py      # 导出 build_server / main / SERVER_NAME
+│   │   ├── server.py        # FastMCP 装配 + ping + 命令行入口（--transport/--host/--port）
+│   │   ├── config.py        # McpServerConfig 沙箱与上限（JWIPC_MCP_* 环境变量）
+│   │   ├── security.py      # SandboxRoot 路径白名单 / GitCommandPolicy 命令白名单 / ConfirmationGate
+│   │   ├── schemas.py       # 出参模型（ToolResult 信封 + tool_failure 统一错误）
+│   │   ├── tools.py         # list_files / read_file / git_log / check_commit_message
+│   │   └── client.py        # 双传输客户端封装（connect_stdio / connect_http）
+│   └── graph/               # Week 8 LangGraph 状态化工作流
+│       ├── __init__.py      # 导出 build_requirement_workflow / build_quickstart_graph / WorkflowConfig
+│       ├── state.py         # WorkflowState（TypedDict，total=False，15 字段）
+│       ├── config.py        # WorkflowConfig（JWIPC_GRAPH_* 环境变量）
+│       ├── fakes.py         # 可注入 Fake ChatFn（按 system 消息 task 键路由）
+│       ├── nodes.py         # 6 业务节点 + clarify 中断节点 + 重试降级 + 条件路由
+│       ├── workflow.py      # build_requirement_workflow 组装（固定边 + 条件边 + checkpointer）
+│       └── quickstart.py    # 最小示例图（条件边 + interrupt + Checkpoint 续跑）
 ├── data/
 │   └── mcp_sandbox/         # Week 7 沙箱夹具（.gitignore 忽略，不入库）
-├── tests/                   # pytest 测试（32 个文件，350 用例 + 1 skip）
+├── tests/                   # pytest 测试（35 个文件，374 用例 + 1 skip）
 │   ├── conftest.py                 # 全局 fixture（预留）
 │   ├── fake_models.py              # Week 3 测试假模型（FakeToolCapableChatModel）
 │   ├── test_config.py              # AppConfig 配置加载 / 字段校验 / env 隔离
@@ -165,8 +185,12 @@ week01_ai_basics/
 │   ├── test_rag_metadata_filter.py # Week 6 Metadata Filter
 │   ├── test_rag_rerank.py          # Week 6 轻量精排
 │   ├── test_mcp_server_tools.py    # Week 7 MCP 4 工具常规 + 边界（15 条）
+│   ├── test_mcp_client.py          # Week 7 双传输客户端端到端（3 条）
 │   ├── test_mcp_security.py        # Week 7 SandboxRoot / GitCommandPolicy / ConfirmationGate（10 条）
-│   └── test_mcp_client.py          # Week 7 双传输客户端端到端（3 条）
+│   └── graph/                      # Week 8 状态化工作流测试（24 条）
+│       ├── test_workflow_smoke.py        # 冒烟：正常 6 节点 / 歧义中断 + resume / 降级
+│       ├── test_requirement_workflow.py  # 图结构 5 + 节点职责 7 + 人工确认 4
+│       └── test_graph_resilience.py      # 韧性 5：重试 / 降级 / 配置 / 依赖 / 报告
 ├── examples/                # 真实 / 样本数据
 │   ├── requirement_samples.json    # 需求分析样本
 │   ├── structured_run_real.json    # 真实模型运行输出样本
@@ -220,6 +244,9 @@ week01_ai_basics/
     ├── week07_tools.md      # Week 7 MCP 工具说明（入参/出参/行为/异常码）
     ├── week07_security_report.md  # Week 7 安全测试报告（三道闸设计与实测）
     ├── week07_summary.md    # 第 7 周阶段总结
+    ├── week08_architecture.md  # Week 8 Mermaid 架构图 + 节点职责 + Checkpoint 示例
+    ├── week08_state_fields.md  # Week 8 状态字段说明（写入方 / 读取方 / 失败取值）
+    ├── week08_summary.md    # 第 8 周阶段总结
     └── poho/                # 运行 / 测试截图（不入库）
 ```
 
@@ -266,6 +293,7 @@ week01_ai_basics/
 | httpx           | ≥ 0.28.1    | `uv run python -c "import httpx; print(httpx.__version__)"`                               |
 | python-dotenv   | ≥ 1.2.2     | `uv run python -c "import dotenv; print(dotenv.__version__)"`                             |
 | LangChain       | ≥ 1.3.14    | `uv run python -c "import langchain; print(langchain.__version__)"`                        |
+| LangGraph       | ≥ 1.2.10    | `uv run python -c "import langgraph; print(langgraph.__file__)"`                           |
 
 > **关于 `fastapi[standard]`（FastAPI 增强版）**：本项目锁定的是 `fastapi[standard]`，**不是**裸 `fastapi`。`[standard]` 额外捆绑了 `uvicorn` 与 `fastapi` 命令行工具（`fastapi dev` / `fastapi run`）。若只装了裸 `fastapi`，运行 `uv run fastapi dev src/main.py` 会报「需要安装 `fastapi[standard]`」的错误；请始终用 `uv add "fastapi[standard]"`，依赖已在 `pyproject.toml` 中声明。
 
@@ -450,7 +478,7 @@ curl -s -X POST http://127.0.0.1:8000/analyze-requirement \
 ## 7. 测试与质量
 
 ```bash
-# 全部测试（截至 Week 7 共 350 passed + 1 skipped）
+# 全部测试（截至 Week 8 共 374 passed + 1 skipped）
 uv run pytest -q
 
 # 按模块运行（部分示例）
@@ -460,11 +488,21 @@ uv run pytest -v tests/test_atool_calling.py
 uv run pytest -v tests/test_dify_client.py tests/test_app_dify.py
 uv run pytest -v tests/test_rag_evaluate.py tests/test_rag_probes.py
 
-# 本周新增模块单测（MCP 28 条）
+# Week 7 新增模块单测（MCP 28 条）
 uv run pytest -v tests/test_mcp_server_tools.py tests/test_mcp_security.py tests/test_mcp_client.py
+
+# Week 8 新增模块单测（状态化工作流 24 条）
+uv run pytest -v tests/graph
 
 # 单个用例
 uv run pytest -v tests/test_api.py::test_chat_timeout_returns_504
+
+# Week 8 工作流脚本（默认注入 Fake，不依赖模型与 Qdrant）
+uv run python scripts/graph_week8_quickstart.py        # 最小状态图：条件边 + interrupt + Checkpoint
+uv run python scripts/graph_week8_workflow.py          # 两条主路径：正常 / 歧义澄清
+uv run python scripts/graph_week8_resilience.py        # 韧性：重试 / 降级 / Checkpoint 续跑
+uv run python scripts/graph_week8_demo.py              # 业务串联：1 正常 + 3 异常
+uv run python scripts/graph_week8_demo.py --scenario normal --real   # 接真实 Ollama + Qdrant
 
 # 静态检查 + 格式化
 uv run ruff check .
@@ -517,7 +555,7 @@ uv run python scripts/mcp_week7_review.py --transport streamable-http
 uv run python scripts/mcp_week7_review.py --demo-errors
 ```
 
-**测试内容（32 个文件 / 350 用例 + 1 skip）**
+**测试内容（35 个文件 / 374 用例 + 1 skip）**
 
 | 测试文件 | 覆盖主题 | 关键验证点 |
 | --- | --- | --- |
@@ -549,6 +587,9 @@ uv run python scripts/mcp_week7_review.py --demo-errors
 | `test_mcp_server_tools.py` | Week 7 MCP 工具 | 4 工具常规 + 边界（越界/不存在/目录/超限/二进制/确认后放行/截断/非仓库） |
 | `test_mcp_security.py` | Week 7 安全闸 | SandboxRoot 各类越界、GitCommandPolicy 注入拦截、ConfirmationGate 状态（symlink 用例 Windows skip） |
 | `test_mcp_client.py` | Week 7 双传输 | stdio 真实子进程全链路、Streamable HTTP ASGI 端到端、connect_http 工厂注入 |
+| `graph/test_workflow_smoke.py` | Week 8 工作流冒烟 | 正常 6 节点写满字段、歧义 interrupt + `Command(resume=...)` 续跑、LLM 永久失败降级 |
+| `graph/test_requirement_workflow.py` | Week 8 图结构与节点 | 节点集合与固定边主链、条件边路由、thread 隔离、Mermaid 导出；6 节点各自字段与降级；人工确认 4 条 |
+| `graph/test_graph_resilience.py` | Week 8 韧性测试 | 瞬时故障重试成功不留 errors、永久失败写 errors、重试次数可配置、依赖降级不中断、失败后报告仍产出 |
 
 **测试架构要点**
 
@@ -570,4 +611,5 @@ uv run python scripts/mcp_week7_review.py --demo-errors
 | Week 4 | 2026-08-14 | Dify 双工作流 DSL（`dify_workflows/`）+ `POST /dify/run` 通用透传端点 + `DifyWorkflowClient`；Dify 版 vs 代码版对比报告；全量 **194 passed** | **未更新**（本周落档时遗漏 README 同步） |
 | Week 5 | 2026-08-20 | RAG 检索基础（`src/rag/`：ingestion / embeddings / retriever / qdrant_store / evaluate / probes）+ 离线可跑的 Recall@K 评测框架，五类未命中归因闭环；全量 **259 passed** | **本次更新**：补入 Week 4 + Week 5 内容——顶部概述、§1 项目内容（W4/W5 段落 + 最终实现）、§2 目录结构（新增 `src/rag`、`dify_client`、`tests` 新文件、`scripts` 新脚本、`examples/retrieval_set.json`、`dify_workflows/`、docs 新文档）、§3 技术栈（Qdrant / Embedding / Dify）、§6 API（6 端点，新增 `POST /dify/run`）、§7 测试（259 passed + 新增测试表行）、并新增本 §8 更新记录 |
 | Week 6 | 2026-08-20 ~ 08-31 | RAG 应用闭环（多格式导入 / RagGenerator 拒答引用 / `POST /rag/query` / 30 条问答集 / 参数网格）；检索增强融合进 `src/rag/`；全量 **319 passed** | **未更新**（本周落档时遗漏 README 同步，Week 7 更新时一并补齐 §1/§2/§8） |
-| Week 7 | 2026-08-31 ~ 09-02 | MCP 全链路（`src/jwipc_dev_mcp_server/` 6 模块 + 双传输客户端 + 冒烟/审查脚本 + 28 条 MCP 测试）；三道安全闸；全量 **350 passed, 1 skipped** | **本次更新**：顶部概述扩至 Week 7；§1 项目内容补 Week 6/Week 7 段落与最终实现；§2 目录结构补 `src/jwipc_dev_mcp_server/`、`data/mcp_sandbox/`、tests/scripts/docs 新文件；§8 补 Week 6/Week 7 两行 |
+| Week 7 | 2026-08-31 ~ 09-04 | MCP 全链路（`src/jwipc_dev_mcp_server/` 6 模块 + 双传输客户端 + 冒烟/审查脚本 + 28 条 MCP 测试）；三道安全闸；全量 **350 passed, 1 skipped** | **本次更新**：顶部概述扩至 Week 7；§1 项目内容补 Week 6/Week 7 段落与最终实现；§2 目录结构补 `src/jwipc_dev_mcp_server/`、`data/mcp_sandbox/`、tests/scripts/docs 新文件；§8 补 Week 6/Week 7 两行 |
+| Week 8 | 2026-09-07 ~ 09-11 | LangGraph 状态化工作流（`src/graph/` 6 模块 + 6 业务节点 / 1 澄清节点 + 4 个演示脚本 + 24 条图相关测试）；重试降级、Checkpoint 续跑、人工确认闭环；全量 **374 passed, 1 skipped** | **本次更新**：顶部概述扩至 Week 8；§1 项目内容补 Week 8 段落与最终实现（374 passed）；§2 目录结构补 `src/graph/`、`tests/graph/`；§3 技术栈补 LangGraph；§7 补 Week 8 测试与脚本命令（用例数 374、35 个文件）；§8 补 Week 8 一行 |
