@@ -112,3 +112,6 @@ data/mcp_sandbox/
 
 # Agent 服务的会话记录与幂等缓存（运行期产物，容器内挂 Volume）
 data/agent_service_sessions/
+
+# 服务冒烟脚本的临时语料
+data/service_smoke/
