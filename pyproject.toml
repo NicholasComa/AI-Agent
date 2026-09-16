@@ -69,6 +69,7 @@ ignore = [
 "scripts/mcp_week7_server.py" = ["E402"]  # bootstrap: must add src/ to sys.path before local imports
 "scripts/mcp_week7_smoke.py" = ["E402"]  # bootstrap: must add src/ to sys.path before local imports
 "scripts/graph_week8_*.py" = ["E402"]  # bootstrap: must add src/ to sys.path before local imports
+"scripts/service_week9_*.py" = ["E402", "PLW0603"]  # bootstrap + script-level counter
 
 [tool.ruff.format]
 quote-style = "double"
