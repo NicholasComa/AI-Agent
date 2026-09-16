@@ -22,14 +22,11 @@ from __future__ import annotations
 import logging
 from importlib import metadata
 
-from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from config import load_config
-from logging_config import configure_logging
 from middleware import AccessLogASGIMiddleware, RequestIdASGIMiddleware
 
 from .deps import AgentServiceDeps
@@ -42,12 +39,7 @@ from .errors import (
     status_code_to_error_code,
 )
 from .lifespan import UNKNOWN_VERSION, service_lifespan
-from .routes import health_router
-
-# ``.env`` 必须在读取配置之前载入：``AgentServiceSettings`` 与 ``load_config``
-# 都从进程环境变量取值。``override=False`` 保证外部注入的变量（CI / 容器）
-# 优先于文件内容。
-load_dotenv()
+from .routes import health_router, rag_router, tools_router, workflow_router
 
 logger = logging.getLogger(__name__)
 
@@ -67,25 +59,6 @@ def _resolve_version() -> str:
         return metadata.version(_DISTRIBUTION_NAME)
     except metadata.PackageNotFoundError:
         return UNKNOWN_VERSION
-      
-
-def _configure_logging() -> None:
-    """按项目配置初始化结构化日志。
-
-    配置缺失时回退到一行式 plain 格式并给出 WARNING：日志能力降级不应该
-    阻止服务启动，因为「服务起不来」比「日志格式不统一」严重得多。
-    """
-    try:
-        config = load_config()
-    except Exception as exc:  # noqa: BLE001 —— 配置缺失是预期的降级路径
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
-            datefmt="%H:%M:%S",
-        )
-        logger.warning("failed to configure structured logging: %s", exc)
-        return
-    configure_logging(config.log_level, config.log_format)
 
 
 def create_agent_service_app(
@@ -106,7 +79,6 @@ def create_agent_service_app(
         注册了中间件、异常处理器与全部路由的 :class:`FastAPI` 实例。
     """
     resolved_version = version or _resolve_version()
-    _configure_logging()
 
     app = FastAPI(
         title=title,
@@ -124,6 +96,9 @@ def create_agent_service_app(
 
     _register_exception_handlers(app)
     app.include_router(health_router)
+    app.include_router(rag_router)
+    app.include_router(workflow_router)
+    app.include_router(tools_router)
     return app
 
 

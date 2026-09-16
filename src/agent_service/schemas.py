@@ -7,15 +7,32 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from rag.generator import DEFAULT_MIN_SCORE
 
 SERVICE_NAME = "agent-service"
 """``/health`` 与 ``/ready`` 回报的服务名。"""
 
 Backend = Literal["real", "fake"]
 """后端模式：``real`` 表示已接上真实模型接口，``fake`` 表示降级到确定性实现。"""
+
+WorkflowStatus = Literal["completed", "awaiting_clarification"]
+"""工作流一次执行的结果状态。"""
+
+MAX_QUESTION_LENGTH = 4000
+"""提问长度上限，与离线 RAG 链路的约定保持一致。"""
+
+MAX_REQUIREMENT_LENGTH = 8000
+"""需求文本长度上限。"""
+
+MAX_ANSWERS = 10
+"""一次补充澄清答案的条数上限。"""
+
+MAX_SESSION_ID = 64
+"""会话 ID 长度上限，与 :mod:`agent_service.session` 的校验保持一致。"""
 
 
 class DependencyState(BaseModel):
@@ -77,4 +94,185 @@ class ServiceReadyResponse(BaseModel):
 
     status: Literal["ready", "degraded"]
     dependencies: list[DependencyState]
+    request_id: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# RAG 问答
+# ---------------------------------------------------------------------------
+
+
+class RagQueryRequest(BaseModel):
+    """``POST /v1/rag/answer`` 请求体。
+
+    Attributes:
+        question: 用户问题。
+        top_k: 召回片段数。
+        min_score: Top1 相似度下限，低于该值直接拒答，不调用模型。
+        stream: 为 ``true`` 时响应改为 ``text/event-stream``，逐帧推送。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    question: str = Field(
+        ...,
+        min_length=1,
+        max_length=MAX_QUESTION_LENGTH,
+        description="用户问题，非空",
+    )
+    top_k: int = Field(default=3, ge=1, le=20, description="召回片段数")
+    min_score: float = Field(
+        default=float(DEFAULT_MIN_SCORE),
+        ge=0.0,
+        le=1.0,
+        description="Top1 相似度拒答阈值",
+    )
+    stream: bool = Field(default=False, description="true 时以 SSE 逐帧推送")
+
+
+# ---------------------------------------------------------------------------
+# 需求分析工作流
+# ---------------------------------------------------------------------------
+
+
+class WorkflowStartRequest(BaseModel):
+    """``POST /v1/workflow/requirement-analysis`` 请求体。
+
+    Attributes:
+        requirement_text: 原始需求文本。
+        session_id: 可选会话标识。传入后线程绑定被持久化，便于续跑与
+            进程重启后恢复。
+        thread_id: 可选线程标识。由调用方显式指定时以其为准，用于客户端
+            自行管理连续性。
+        stream: 为 ``true`` 时响应改为 ``text/event-stream``，按节点推帧。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    requirement_text: str = Field(
+        ...,
+        min_length=1,
+        max_length=MAX_REQUIREMENT_LENGTH,
+        description="原始需求文本",
+    )
+    session_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_SESSION_ID,
+        description="可选会话标识",
+    )
+    thread_id: str | None = Field(default=None, description="可选线程标识")
+    stream: bool = Field(default=False, description="true 时以 SSE 按节点推送")
+
+
+class WorkflowResumeRequest(BaseModel):
+    """``POST /v1/workflow/{thread_id}/resume`` 请求体。
+
+    Attributes:
+        answers: 人工补充的澄清答案，按问题顺序给出。
+        stream: 为 ``true`` 时响应改为 ``text/event-stream``。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    answers: list[str] = Field(
+        ...,
+        min_length=1,
+        max_length=MAX_ANSWERS,
+        description="补充的澄清答案",
+    )
+    stream: bool = Field(default=False, description="true 时以 SSE 按节点推送")
+
+
+class WorkflowRunResponse(BaseModel):
+    """工作流一次执行的结果。
+
+    Attributes:
+        thread_id: 本次执行的线程标识。
+        session_id: 关联的会话标识；调用方未提供时为 ``None``。
+        status: ``completed`` 表示跑完；``awaiting_clarification`` 表示因
+            关键信息不足而挂起，等待补充后调 resume。
+        clarification_questions: 挂起时列出待澄清问题。
+        report: 报告正文；挂起时为 ``None``。
+        trace: 节点执行顺序。
+        rag_degraded: 本次是否未检索到内部资料。
+        errors: 节点失败记录。
+        request_id: 与响应头 ``X-Request-ID`` 同源。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    thread_id: str
+    session_id: str | None = None
+    status: WorkflowStatus
+    clarification_questions: list[str] = Field(default_factory=list)
+    report: str | None = None
+    trace: list[str] = Field(default_factory=list)
+    rag_degraded: bool = False
+    errors: list[dict[str, Any]] = Field(default_factory=list)
+    request_id: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# MCP 工具
+# ---------------------------------------------------------------------------
+
+
+class ToolInfo(BaseModel):
+    """单个 MCP 工具的元信息。
+
+    Attributes:
+        name: 工具名。
+        description: 工具说明。
+        input_schema: 入参 JSON Schema，供调用方构造参数。
+    """
+
+    name: str
+    description: str = ""
+    input_schema: dict[str, Any] = Field(default_factory=dict)
+
+
+class ToolListResponse(BaseModel):
+    """``GET /v1/tools`` 响应体。
+
+    Attributes:
+        tools: 已发现工具列表。
+        request_id: 与响应头 ``X-Request-ID`` 同源。
+    """
+
+    tools: list[ToolInfo]
+    request_id: str | None = None
+
+
+class ToolCallRequest(BaseModel):
+    """``POST /v1/tools/{name}/call`` 请求体。
+
+    Attributes:
+        arguments: 传给工具的参数对象，参数校验由工具自身完成。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    arguments: dict[str, Any] = Field(default_factory=dict, description="工具入参")
+
+
+class ToolCallResponse(BaseModel):
+    """工具调用结果。
+
+    ``is_error`` 为 ``true`` 表示工具侧返回了错误结论（参数非法、路径越界
+    等），这属于正常业务结果，HTTP 状态码仍为 200；只有 MCP 会话本身不可用
+    才返回 503。
+
+    Attributes:
+        name: 被调用的工具名。
+        is_error: 工具是否返回错误结论。
+        structured: 工具的结构化输出信封。
+        text: 工具返回的文本内容。
+        request_id: 与响应头 ``X-Request-ID`` 同源。
+    """
+
+    name: str
+    is_error: bool
+    structured: dict[str, Any] = Field(default_factory=dict)
+    text: str | None = None
     request_id: str | None = None
