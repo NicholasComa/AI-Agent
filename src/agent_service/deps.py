@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -24,6 +25,20 @@ logger = logging.getLogger(__name__)
 Closer = Callable[[], Awaitable[None]]
 """异步释放钩子。容器关闭时按注册的逆序依次调用。"""
 
+_LAYER_OF: dict[str, str] = {
+    "rag": "qdrant",
+    "llm": "llm",
+    "chat_fn": "llm",
+    "graph": "workflow",
+    "mcp": "mcp",
+    "sessions": "session_store",
+}
+"""容器字段名到探活层名的映射。
+
+``require("rag")`` 取的是容器字段，而 :meth:`set_dependency` 记录的是语义层名
+（``qdrant``）。映射一次，报错时才能带上「哪一层没起来」这个有用信息。
+"""
+
 
 @dataclass
 class AgentServiceDeps:
@@ -35,9 +50,13 @@ class AgentServiceDeps:
         started_at: 启动时间（带时区）。
         backend: 后端模式，由模型接口是否就绪推导。
         llm: :class:`llm_client.LlmClient` 实例；未就绪时为 ``None``。
+        chat_fn: 由 ``llm`` 适配出的对话函数（``messages -> text``），供 RAG
+            生成与工作流共用；未就绪时为 ``None``。
         rag: 已就绪的知识库检索器；未就绪时为 ``None``。
         graph: 已编译的 LangGraph 工作流；未就绪时为 ``None``。
         mcp: 已握手的 MCP 会话；未启用或失败时为 ``None``。
+        sessions: 会话与幂等存储；未就绪时为 ``None``。
+        gate: 服务级并发闸门，容量取自 ``settings.max_concurrency``。
         dependencies: 逐依赖探活结果，探针接口直接读取。
         closers: 释放钩子，按注册逆序执行。
     """
@@ -47,11 +66,19 @@ class AgentServiceDeps:
     started_at: datetime
     backend: Backend = "fake"
     llm: Any = None
+    chat_fn: Any = None
     rag: Any = None
     graph: Any = None
     mcp: Any = None
+    sessions: Any = None
+    gate: asyncio.Semaphore = field(init=False)
     dependencies: list[DependencyState] = field(default_factory=list)
     closers: list[Closer] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        # asyncio.Semaphore 是惰性的：第一次 acquire 时才绑定当前事件循环，
+        # 因此在同步构造阶段创建它是安全的。
+        self.gate = asyncio.Semaphore(self.settings.max_concurrency)
 
     @classmethod
     def create(cls, settings: AgentServiceSettings, *, version: str) -> AgentServiceDeps:
@@ -75,6 +102,22 @@ class AgentServiceDeps:
             if state.name == name:
                 return state
         return None
+
+    def require(self, name: str) -> Any:
+        """取一个必需依赖，缺失时抛 :class:`ServiceError`。
+
+        路由用本方法代替散落的 ``if deps.rag is None`` 判断，保证「依赖不可用」
+        在所有接口上都返回同一个 503 与同一个错误码。
+        """
+        value = getattr(self, name, None)
+        if value is None:
+            state = self.dependency(_LAYER_OF.get(name, name))
+            raise ServiceError(
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                f"{name} is not available",
+                detail=state.detail if state is not None else "dependency was not initialized",
+            )
+        return value
 
     @property
     def degraded_names(self) -> list[str]:

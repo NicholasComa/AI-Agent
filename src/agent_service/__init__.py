@@ -8,6 +8,8 @@
     settings.py  服务级配置（AGENT_SERVICE_* 环境变量）
     errors.py    错误码与统一错误信封
     schemas.py   线协议模型
+    session.py   会话绑定与幂等缓存（落盘）
+    guards.py    并发闸门、请求总时限、断开检测与幂等回放
     routes/      接口层，按能力拆分
 
 导入本包不会建立网络连接：所有真实对象都在生命周期钩子里构造。
@@ -17,13 +19,17 @@ from .app import create_agent_service_app
 from .deps import AgentServiceDeps, get_deps
 from .errors import ErrorCode, ServiceError
 from .lifespan import build_deps, service_lifespan
+from .session import IdempotentEntry, SessionRecord, SessionStore
 from .settings import AgentServiceSettings
 
 __all__ = [
     "AgentServiceDeps",
     "AgentServiceSettings",
     "ErrorCode",
+    "IdempotentEntry",
     "ServiceError",
+    "SessionRecord",
+    "SessionStore",
     "build_deps",
     "create_agent_service_app",
     "get_deps",

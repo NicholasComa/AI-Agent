@@ -2,7 +2,8 @@
 
 组装顺序:
 
-    配置 -> 会话存储 -> Qdrant 与知识库 -> LlmClient -> MCP 会话 -> 工作流图
+    运行准备（.env + 日志）-> 配置 -> 会话存储 -> Qdrant 与知识库 ->
+    LlmClient -> MCP 会话 -> 工作流图
 
 每一步都独立捕获异常并写入 :class:`agent_service.schemas.DependencyState`：
 - 必需依赖（会话存储、配置、Qdrant、模型接口、工作流）不可用时，服务照常
@@ -10,7 +11,8 @@
 - 可选依赖（MCP）默认不启用，避免无意义地拉起子进程。
 
 真实连接信息沿用项目既有配置源：模型接口读 ``API_BASE_URL`` / ``MODEL_NAME``，
-Qdrant 读 ``QDRANT_*``，不在服务层重复声明。
+Qdrant 读 ``QDRANT_*``，不在服务层重复声明。``.env`` 只在启动阶段载入，导入本
+模块不会改动进程环境——否则任何导入方（例如测试）都会被悄悄改写运行环境。
 """
 
 from __future__ import annotations
@@ -21,16 +23,19 @@ import sys
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
 
 from config import AppConfig, load_config
 from graph import ChatFn, build_requirement_workflow, make_fake_chat
 from jwipc_dev_mcp_server.client import connect_stdio
 from llm_client import LlmClient
+from logging_config import configure_logging
 from rag.embeddings import get_embedding
 from rag.knowledge_rag import JwipcKnowledgeRAG, build_qdrant_config
 
 from .deps import AgentServiceDeps
+from .session import SessionStore
 from .settings import AgentServiceSettings
 
 logger = logging.getLogger(__name__)
@@ -40,6 +45,29 @@ UNKNOWN_VERSION = "0.0.0"
 
 _REQUIRED = True
 _OPTIONAL = False
+
+
+def _prepare_runtime() -> None:
+    """载入 ``.env`` 并按项目配置初始化结构化日志。
+
+    ``.env`` 必须在读配置之前载入：``load_config`` 从进程环境变量取值。
+    ``override=False`` 保证容器 / CI 注入的变量优先于文件内容。
+
+    日志配置失败只降级为一行式 plain 格式并给出 WARNING——日志格式不统一
+    远没有「服务起不来」严重。
+    """
+    load_dotenv()
+    try:
+        config = load_config()
+    except Exception as exc:  # noqa: BLE001 —— 配置缺失是预期的降级路径
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+            datefmt="%H:%M:%S",
+        )
+        logger.warning("failed to configure structured logging: %s", exc)
+        return
+    configure_logging(config.log_level, config.log_format)
 
 
 def _brief(exc: BaseException, *, limit: int = 160) -> str:
@@ -69,17 +97,14 @@ def _make_chat_fn(client: LlmClient) -> ChatFn:
 
 
 def _prepare_session_store(deps: AgentServiceDeps) -> None:
-    """创建会话目录并验证可写。
+    """建立会话与幂等存储。
 
-    只做「建目录 + 判可写」两件事，不写探针文件：启动阶段留下临时文件既需要
-    清理，也会在某些受管控环境里触发删除拦截，凭空给启动引入失败点。
+    存储构造时会建目录、校验可写并从落盘文件恢复状态，因此这里同时充当
+    ``session_store`` 的探活点。启动阶段不写任何临时探针文件：留下文件就必然
+    要清理，等于给启动链路多引入一个失败点。
     """
-    directory = deps.settings.session_dir
     try:
-        directory.mkdir(parents=True, exist_ok=True)
-        if not os.access(directory, os.W_OK):
-            msg = f"session dir is not writable: {directory}"
-            raise OSError(msg)
+        deps.sessions = SessionStore(deps.settings.session_dir)
     except OSError as exc:
         deps.set_dependency(
             "session_store",
@@ -88,11 +113,12 @@ def _prepare_session_store(deps: AgentServiceDeps) -> None:
             detail=_brief(exc),
         )
         return
+    stats = deps.sessions.stats()
     deps.set_dependency(
         "session_store",
         ready=True,
         required=_REQUIRED,
-        detail=f"dir={directory.resolve()}",
+        detail=f"dir={deps.settings.session_dir.resolve()} sessions={stats['sessions']}",
     )
 
 
@@ -172,6 +198,7 @@ def _build_llm(deps: AgentServiceDeps, config: AppConfig | None) -> ChatFn | Non
         )
         return None
     deps.llm = client
+    deps.chat_fn = _make_chat_fn(client)
     deps.add_closer(client.aclose)
     deps.backend = "real"
     deps.set_dependency(
@@ -180,7 +207,7 @@ def _build_llm(deps: AgentServiceDeps, config: AppConfig | None) -> ChatFn | Non
         required=_REQUIRED,
         detail=f"model={config.model_name} timeout={deps.settings.request_timeout_seconds}s",
     )
-    return _make_chat_fn(client)
+    return deps.chat_fn
 
 
 async def _connect_mcp(deps: AgentServiceDeps) -> None:
@@ -267,6 +294,7 @@ async def build_deps(
     Returns:
         依赖容器。任何一步失败都只体现在 ``dependencies`` 里，不抛异常。
     """
+    _prepare_runtime()
     resolved = settings or AgentServiceSettings()
     deps = AgentServiceDeps.create(resolved, version=version)
 
