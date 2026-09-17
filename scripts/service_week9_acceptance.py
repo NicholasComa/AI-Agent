@@ -15,8 +15,16 @@
     # 只跑某一组
     uv run python scripts/service_week9_acceptance.py --only rag
 
+    # 连入站防护一起验（密钥与两个上限都注入子进程）
+    uv run python scripts/service_week9_acceptance.py \
+        --api-key demo-key --rate-limit 5 --max-body-bytes 512
+
 分组（``--only`` 可选值）：``probe`` / ``rag`` / ``idempotency`` /
-``stream`` / ``workflow`` / ``tools`` / ``envelope``。
+``stream`` / ``workflow`` / ``tools`` / ``envelope`` / ``security``。
+
+``security`` 分组放在最后执行：它的 429 用例会打满配额，先跑会把后续分组
+全打成 429。413 与 429 断言需要知道服务端上限，因此只在传了
+``--max-body-bytes`` / ``--rate-limit`` 时执行，否则记为跳过。
 
 退出码 0 表示全部通过；非 0 表示有失败项或脚本自身出错。
 """
@@ -27,7 +35,9 @@ import argparse
 import json
 import subprocess
 import sys
+import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -80,6 +90,28 @@ class Timeouts:
 
 TIMEOUTS = Timeouts()
 """本次运行的超时配置，由 :func:`main` 按命令行参数写入。"""
+
+API_KEY = ""
+"""本次运行的 Bearer 密钥；非空时所有业务请求都带上该令牌。"""
+
+BODY_LIMIT = 0
+"""子进程的请求体上限；0 表示沿用服务缺省值（用于 413 用例）。"""
+
+RATE_LIMIT = 0
+"""子进程的每分钟配额；0 表示沿用服务缺省值（用于 429 用例）。"""
+
+
+def _auth_headers() -> dict[str, str]:
+    """业务路由需要的认证头；未配置密钥时为空。"""
+    return {"Authorization": f"Bearer {API_KEY}"} if API_KEY else {}
+
+
+def _merge_headers(headers: dict[str, str] | None = None) -> dict[str, str] | None:
+    """把认证头并入调用方给出的请求头。"""
+    merged = _auth_headers()
+    if headers:
+        merged.update(headers)
+    return merged or None
 
 
 @dataclass
@@ -137,6 +169,8 @@ class ServerProcess:
         self.host = host
         self.extra_env = extra_env
         self._process: subprocess.Popen[str] | None = None
+        self._recent: deque[str] = deque(maxlen=200)
+        self._reader: threading.Thread | None = None
 
     @property
     def base_url(self) -> str:
@@ -169,6 +203,19 @@ class ServerProcess:
             encoding="utf-8",
             errors="replace",
         )
+        self._reader = threading.Thread(target=self._drain_output, daemon=True)
+        self._reader.start()
+
+    def _drain_output(self) -> None:
+        """持续读取子进程输出并保留最后若干行。
+
+        必须边跑边读：管道缓冲区只有几 KB，写满后服务进程会阻塞在写日志上，
+        对外表现为请求无响应。这不是业务逻辑出错，但会让验收结果全是超时。
+        """
+        if self._process is None or self._process.stdout is None:
+            return
+        for line in self._process.stdout:
+            self._recent.append(line.rstrip("\n"))
 
     def wait_until_ready(self) -> bool:
         """轮询 ``/health``，直到进程能应答或超时。
@@ -191,13 +238,10 @@ class ServerProcess:
         return False
 
     def tail_output(self, lines: int = 30) -> str:
-        """进程退出时把日志倒出来，便于定位启动失败原因。"""
-        if self._process is None or self._process.stdout is None:
+        """取最近若干行日志，便于定位启动失败原因。"""
+        if not self._recent:
             return ""
-        if self._process.poll() is None:
-            return ""
-        captured = self._process.stdout.read()
-        return "\n".join(captured.splitlines()[-lines:])
+        return "\n".join(list(self._recent)[-lines:])
 
     def stop(self) -> None:
         if self._process is None or self._process.poll() is not None:
@@ -209,14 +253,9 @@ class ServerProcess:
         except subprocess.TimeoutExpired:
             self._process.kill()
             self._process.wait(timeout=5)
-
-
-def _parse_sse(lines: list[str]) -> list[dict[str, Any]]:
-    frames: list[dict[str, Any]] = []
-    for line in lines:
-        if line.startswith("data: "):
-            frames.append(json.loads(line[len("data: ") :]))
-    return frames
+        if self._reader is not None:
+            # 进程已退出，读取线程会随即读到 EOF；等一下让日志收全。
+            self._reader.join(timeout=5)
 
 
 def _stream_frames(
@@ -224,7 +263,13 @@ def _stream_frames(
 ) -> list[dict[str, Any]]:
     """以流式方式请求并收集全部 SSE 数据帧。"""
     frames: list[dict[str, Any]] = []
-    with client.stream("POST", path, json=payload, timeout=TIMEOUTS.request) as response:
+    with client.stream(
+        "POST",
+        path,
+        json=payload,
+        timeout=TIMEOUTS.request,
+        headers=_merge_headers(),
+    ) as response:
         if response.status_code != 200:
             return []
         for line in response.iter_lines():
@@ -258,6 +303,154 @@ def run_probe(client: httpx.Client, report: Report) -> None:
             item["name"] for item in body["dependencies"] if item["required"] and not item["ready"]
         ]
         report.failed("probe", "/ready", f"status={ready.status_code} required_not_ready={broken}")
+
+
+def run_security(client: httpx.Client, report: Report) -> None:
+    """入站防护分组：认证、请求体上限与配额。
+
+    413 与 429 需要知道服务端的上限才能断言，因此只在 ``--max-body-bytes`` /
+    ``--rate-limit`` 显式给出时执行；认证用例则按服务实际行为判定，未配密钥
+    的服务会自动跳过——不能把「本机开发模式」当成失败。
+    """
+    print("\n== 入站防护 ==")
+
+    # 探针不带令牌也必须作答，否则编排系统会把「依赖坏了」误判成「进程死了」。
+    #
+    # 判据是白名单而非「非 401 即通过」：后者会让 500 / 502 / 404 也记成 PASS，
+    # 而路由被改、探针内抛异常恰恰是这套断言要拦的回归。
+    # 两条探针的合法码不同——/ready 在必需依赖未就绪时**设计上**返回 503
+    # （见 routes/health.py:60-62），因此它必须同时接受 200 与 503；
+    # /health 只判进程存活，状态码恒为 200，故只认 200。
+    for path, expected in (("/health", {200}), ("/ready", {200, 503})):
+        response = _safe_get(
+            client, report, "security", f"探针免认证 {path}", path, timeout=TIMEOUTS.probe
+        )
+        if response is None:
+            continue
+        if response.status_code == 401:
+            report.failed("security", f"探针免认证 {path}", "探针不应要求认证")
+        elif response.status_code in expected:
+            report.passed("security", f"探针免认证 {path}", f"status={response.status_code}")
+        else:
+            report.failed(
+                "security",
+                f"探针免认证 {path}",
+                f"unexpected status={response.status_code}，合法值 {sorted(expected)}",
+            )
+
+    # 判据用「不带令牌的请求是否被拒」推断服务是否启用了认证。
+    anonymous = _safe_post(
+        client,
+        report,
+        "security",
+        "未授权拒绝",
+        RAG_PATH,
+        {"question": QUESTION, "min_score": 0.0},
+        timeout=TIMEOUTS.probe,
+        headers={"Authorization": ""},
+    )
+    if anonymous is not None:
+        if anonymous.status_code == 401:
+            error = anonymous.json().get("error", {})
+            if error.get("code") == "unauthorized" and API_KEY:
+                report.passed("security", "未授权拒绝", "401 unauthorized")
+            elif error.get("code") == "unauthorized":
+                report.failed(
+                    "security",
+                    "未授权拒绝",
+                    "服务已启用认证，请用 --api-key 传入密钥，否则其余分组也会 401",
+                )
+            else:
+                report.failed("security", "未授权拒绝", f"code={error.get('code')}")
+        elif anonymous.status_code == 503 and not API_KEY:
+            # 只有「未配密钥」才允许跳过，且必须是鉴权放行、下游缺依赖这一种解释。
+            # 若报的是别的错误码，说明连鉴权都没跑到，那就是防护失效，不能跳过。
+            code = anonymous.json().get("error", {}).get("code")
+            if code == "dependency_unavailable":
+                report.skipped(
+                    "security",
+                    "未授权拒绝",
+                    "服务未启用认证（AGENT_SERVICE_API_KEY 为空），且当前依赖未就绪",
+                )
+            else:
+                report.failed(
+                    "security",
+                    "未授权拒绝",
+                    f"疑似防护失效：status=503 code={code}",
+                )
+        else:
+            # 500 / 502 / 429 / 404 等一律为失败：以前这里记 SKIP，而 SKIP 不进
+            # report.failures，会让「防护整体失效」拿到退出码 0。
+            report.failed(
+                "security",
+                "未授权拒绝",
+                f"疑似防护失效：status={anonymous.status_code}，期望 401（或认证关闭时的 503）",
+            )
+
+    if BODY_LIMIT > 0:
+        oversized = _safe_post(
+            client,
+            report,
+            "security",
+            "超限请求体 -> 413",
+            RAG_PATH,
+            {"question": "x" * (BODY_LIMIT + 64), "min_score": 0.0},
+            timeout=TIMEOUTS.probe,
+        )
+        if oversized is not None:
+            error = oversized.json().get("error", {})
+            if oversized.status_code == 413 and error.get("code") == "payload_too_large":
+                report.passed("security", "超限请求体 -> 413", f"limit={BODY_LIMIT}")
+            else:
+                report.failed(
+                    "security",
+                    "超限请求体 -> 413",
+                    f"status={oversized.status_code} code={error.get('code')}",
+                )
+    else:
+        report.skipped("security", "超限请求体 -> 413", "未给 --max-body-bytes，无法确定服务端上限")
+
+    if RATE_LIMIT > 0:
+        blocked = None
+        for _ in range(RATE_LIMIT + 2):
+            response = _safe_post(
+                client,
+                report,
+                "security",
+                "配额耗尽 -> 429",
+                RAG_PATH,
+                {"question": QUESTION, "min_score": 0.0},
+                timeout=TIMEOUTS.probe,
+            )
+            if response is None:
+                blocked = None
+                break
+            if response.status_code == 429:
+                blocked = response
+                break
+        if blocked is None:
+            if report.failures and report.failures[-1].label == "配额耗尽 -> 429":
+                pass
+            else:
+                report.failed(
+                    "security",
+                    "配额耗尽 -> 429",
+                    f"打满 {RATE_LIMIT + 2} 次仍未限流",
+                )
+        else:
+            error = blocked.json().get("error", {})
+            # httpx 的 Headers 大小写不敏感，可直接用原始大小写取值。
+            retry_after = blocked.headers.get("Retry-After")
+            if error.get("code") == "rate_limited" and retry_after:
+                report.passed("security", "配额耗尽 -> 429", f"Retry-After={retry_after}")
+            else:
+                report.failed(
+                    "security",
+                    "配额耗尽 -> 429",
+                    f"code={error.get('code')} Retry-After={retry_after}",
+                )
+    else:
+        report.skipped("security", "配额耗尽 -> 429", "未给 --rate-limit，无法确定服务端配额")
 
 
 def _qdrant_ready(client: httpx.Client) -> bool:
@@ -297,7 +490,7 @@ def _safe_post(
     收尾阶段；这类失败应当记为一条失败断言，让后面的分组继续跑完。
     """
     try:
-        return client.post(path, json=payload, timeout=timeout, headers=headers)
+        return client.post(path, json=payload, timeout=timeout, headers=_merge_headers(headers))
     except httpx.TimeoutException:
         report.failed(group, label, f"客户端读超时（{timeout:.0f}s）")
         return None
@@ -314,9 +507,10 @@ def _safe_get(
     path: str,
     *,
     timeout: float,
+    headers: dict[str, str] | None = None,
 ) -> httpx.Response | None:
     try:
-        return client.get(path, timeout=timeout)
+        return client.get(path, timeout=timeout, headers=_merge_headers(headers))
     except httpx.HTTPError as exc:
         report.failed(group, label, f"请求失败：{type(exc).__name__}: {exc}")
         return None
@@ -577,7 +771,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--only",
         default="",
-        help="只跑指定分组，逗号分隔：probe,rag,idempotency,stream,workflow,tools,envelope",
+        help=(
+            "只跑指定分组，逗号分隔：probe,rag,idempotency,stream,workflow,tools,envelope,security"
+        ),
     )
     parser.add_argument(
         "--no-heavy",
@@ -596,18 +792,44 @@ def main(argv: list[str] | None = None) -> int:
         default=CLIENT_TIMEOUT_DEFAULT,
         help=f"客户端单请求超时秒数（默认 {CLIENT_TIMEOUT_DEFAULT:.0f}）",
     )
+    parser.add_argument(
+        "--api-key",
+        default="",
+        help="业务路由的 Bearer 密钥；同时注入子进程（AGENT_SERVICE_API_KEY）",
+    )
+    parser.add_argument(
+        "--max-body-bytes",
+        type=int,
+        default=0,
+        help="子进程的请求体上限；给出后才执行 413 用例（0 表示不覆盖）",
+    )
+    parser.add_argument(
+        "--rate-limit",
+        type=int,
+        default=0,
+        help="子进程的每分钟配额；给出后才执行 429 用例（0 表示不覆盖）",
+    )
     args = parser.parse_args(argv)
 
     groups = [item.strip() for item in args.only.split(",") if item.strip()]
     report = Report()
     server: ServerProcess | None = None
 
-    global TIMEOUTS  # noqa: PLW0603 —— 脚本级配置，供各分组函数读取
+    global API_KEY, BODY_LIMIT, RATE_LIMIT, TIMEOUTS  # noqa: PLW0603 —— 脚本级配置
     TIMEOUTS = Timeouts(request=args.client_timeout)
+    API_KEY = args.api_key
+    BODY_LIMIT = args.max_body_bytes
+    RATE_LIMIT = args.rate_limit
 
     extra_env: dict[str, str] = {}
     if args.timeout_seconds > 0:
         extra_env["AGENT_SERVICE_REQUEST_TIMEOUT_SECONDS"] = str(args.timeout_seconds)
+    if args.api_key:
+        extra_env["AGENT_SERVICE_API_KEY"] = args.api_key
+    if args.max_body_bytes > 0:
+        extra_env["AGENT_SERVICE_MAX_BODY_BYTES"] = str(args.max_body_bytes)
+    if args.rate_limit > 0:
+        extra_env["AGENT_SERVICE_RATE_LIMIT_PER_MINUTE"] = str(args.rate_limit)
 
     if not args.no_spawn:
         server = ServerProcess(args.port, args.host, extra_env)
@@ -638,6 +860,9 @@ def main(argv: list[str] | None = None) -> int:
                 run_workflow(client, report, heavy=not args.no_heavy)
             if _selected(groups, "tools"):
                 run_tools(client, report)
+            # 入站防护放最后：429 用例会打满配额，先跑会把后面的分组全打成 429。
+            if _selected(groups, "security"):
+                run_security(client, report)
     finally:
         if server is not None:
             server.stop()

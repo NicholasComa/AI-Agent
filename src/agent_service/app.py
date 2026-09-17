@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 from importlib import metadata
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -40,6 +40,7 @@ from .errors import (
 )
 from .lifespan import UNKNOWN_VERSION, service_lifespan
 from .routes import health_router, rag_router, tools_router, workflow_router
+from .security import BodySizeLimitMiddleware, enforce_rate_limit, require_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,12 @@ _DESCRIPTION = (
     "可诊断、可部署的后端服务。提供存活探针、就绪探针、指标摘要，"
     "以及 RAG 问答、需求分析工作流与 MCP 工具调用三组业务接口。"
 )
+_BUSINESS_GUARDS = [Depends(require_api_key), Depends(enforce_rate_limit)]
+"""业务路由共用的入站防护。
+
+认证排在限流之前：未通过认证的请求不应消耗调用方的配额。探针路由不挂这两
+项——依赖故障时探针仍须作答，否则编排系统会把「依赖坏了」误判成「进程死了」。
+"""
 
 
 def _resolve_version() -> str:
@@ -89,16 +96,18 @@ def create_agent_service_app(
     if deps is not None:
         app.state.deps = deps
 
-    # 两个中间件都是纯 ASGI 实现，不缓存响应体，因此与 SSE 流式端点兼容。
-    # 后添加的处于外层，最终请求路径为 RequestId -> AccessLog -> 路由。
+    # 三个中间件都是纯 ASGI 实现，不缓存响应体，因此与 SSE 流式端点兼容。
+    # 后添加的处于外层，最终请求路径为 RequestId -> AccessLog -> 大小限制 -> 路由：
+    # request_id 先注入，413 才能带上它；访问日志在外层，被拒的请求也能留下记录。
+    app.add_middleware(BodySizeLimitMiddleware)
     app.add_middleware(AccessLogASGIMiddleware)
     app.add_middleware(RequestIdASGIMiddleware)
 
     _register_exception_handlers(app)
     app.include_router(health_router)
-    app.include_router(rag_router)
-    app.include_router(workflow_router)
-    app.include_router(tools_router)
+    app.include_router(rag_router, dependencies=_BUSINESS_GUARDS)
+    app.include_router(workflow_router, dependencies=_BUSINESS_GUARDS)
+    app.include_router(tools_router, dependencies=_BUSINESS_GUARDS)
     return app
 
 

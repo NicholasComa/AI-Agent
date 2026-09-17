@@ -35,6 +35,7 @@ from rag.embeddings import get_embedding
 from rag.knowledge_rag import JwipcKnowledgeRAG, build_qdrant_config
 
 from .deps import AgentServiceDeps
+from .security import TokenBucketRateLimiter
 from .session import SessionStore
 from .settings import AgentServiceSettings
 
@@ -297,6 +298,9 @@ async def build_deps(
     _prepare_runtime()
     resolved = settings or AgentServiceSettings()
     deps = AgentServiceDeps.create(resolved, version=version)
+
+    # 限流器不依赖任何外部连接，构造不会失败，因此不参与降级流程。
+    deps.rate_limiter = TokenBucketRateLimiter(capacity=resolved.rate_limit_per_minute)
 
     _prepare_session_store(deps)
     config = _load_infra_config(deps)

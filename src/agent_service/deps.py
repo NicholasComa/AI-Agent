@@ -57,6 +57,8 @@ class AgentServiceDeps:
         mcp: 已握手的 MCP 会话；未启用或失败时为 ``None``。
         sessions: 会话与幂等存储；未就绪时为 ``None``。
         gate: 服务级并发闸门，容量取自 ``settings.max_concurrency``。
+        rate_limiter: 按客户端计数的令牌桶；由启动阶段按配置建立，缺省为
+            ``None``，首次限流检查时会按当前配置补建。
         dependencies: 逐依赖探活结果，探针接口直接读取。
         closers: 释放钩子，按注册逆序执行。
     """
@@ -72,6 +74,7 @@ class AgentServiceDeps:
     mcp: Any = None
     sessions: Any = None
     gate: asyncio.Semaphore = field(init=False)
+    rate_limiter: Any = None
     dependencies: list[DependencyState] = field(default_factory=list)
     closers: list[Closer] = field(default_factory=list)
 

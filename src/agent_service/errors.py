@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from enum import StrEnum
 from typing import Any
 
@@ -86,6 +87,7 @@ def error_response(
     *,
     detail: str | None = None,
     request_id: str | None = None,
+    headers: Mapping[str, str] | None = None,
 ) -> JSONResponse:
     """构造带统一信封的错误响应。
 
@@ -95,6 +97,7 @@ def error_response(
         message: 人类可读的一行描述；不得包含密钥或请求体内容。
         detail: 可选的调试细节。
         request_id: 与响应头 ``X-Request-ID`` 同源，便于关联日志。
+        headers: 附加响应头，例如限流时的 ``Retry-After``。
     """
     payload = ErrorResponse(
         error=ErrorBody(
@@ -105,7 +108,10 @@ def error_response(
             request_id=request_id,
         )
     )
-    return JSONResponse(status_code=status_code, content=payload.model_dump(mode="json"))
+    response = JSONResponse(status_code=status_code, content=payload.model_dump(mode="json"))
+    if headers:
+        response.headers.update(headers)
+    return response
 
 
 class ServiceError(Exception):
@@ -116,6 +122,7 @@ class ServiceError(Exception):
         message: 面向客户端的一行描述。
         status_code: HTTP 状态码；缺省取 :data:`DEFAULT_STATUS`。
         detail: 可选的调试细节，不得包含密钥。
+        headers: 附加响应头；缺省为空。限流用它下发 ``Retry-After``。
     """
 
     def __init__(
@@ -125,12 +132,14 @@ class ServiceError(Exception):
         *,
         status_code: int | None = None,
         detail: str | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.status_code = status_code if status_code is not None else DEFAULT_STATUS[code]
         self.detail = detail
+        self.headers: dict[str, str] = dict(headers) if headers else {}
 
     def to_response(self, request_id: str | None = None) -> JSONResponse:
         """把本异常转成统一信封响应。"""
@@ -140,6 +149,7 @@ class ServiceError(Exception):
             self.message,
             detail=self.detail,
             request_id=request_id,
+            headers=self.headers or None,
         )
 
 
