@@ -1,0 +1,32 @@
+# 构建上下文排除清单：既缩小上下文体积，也避免把本机环境与内部资料带进镜像。
+
+# 虚拟环境与各类缓存：镜像内用 /opt/venv，不需要本机环境
+.venv/
+.cache/
+.uv-cache/
+.ruff_cache/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+
+# 版本库与日志
+.git/
+.gitignore
+logs/
+*.log
+
+# 运行期产物：容器内由 Volume 提供，不入镜像
+data/agent_service_sessions/
+data/service_smoke/
+data/mcp_sandbox/
+
+# 内部产品手册：不进镜像，改由 compose 以只读卷挂载，镜像可安全分发
+data/raw/*.pdf
+
+# 密钥只在运行时经 env_file 注入，绝不烘焙进镜像
+.env
+
+# 开发期资料，运行时不读
+tests/
+docs/
+dify_workflows/

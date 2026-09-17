@@ -1,0 +1,54 @@
+# 一键起「Qdrant + Agent 服务」：docker compose up -d
+#
+# environment 段覆盖 .env 里指向本机的地址：容器内的 localhost 是容器自身，
+# 既到不了宿主机的模型服务，也到不了 qdrant 服务。宿主机服务统一走
+# host.docker.internal（由 extra_hosts 映射到网关地址）。
+#
+# 注意：项目代码读的是 API_BASE_URL / EMBEDDING_API_BASE_URL，没有读取
+# OLLAMA_BASE_URL 的地方，因此这里覆盖前两个键而不是后者。
+services:
+  qdrant:
+    image: qdrant/qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  api:
+    build: .
+    env_file:
+      - .env
+    environment:
+      # 容器内必须指向 compose 网络里的服务名，而不是 .env 中的 localhost
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: "6333"
+      QDRANT_MODE: docker
+      # 宿主机上的模型服务（Ollama），由额外 hosts 映射暴露
+      API_BASE_URL: http://host.docker.internal:11434/v1
+      EMBEDDING_API_BASE_URL: http://host.docker.internal:11434/v1
+      # 容器内的落盘位置，与下面挂的卷一一对应
+      AGENT_SERVICE_SESSION_DIR: /app/data/agent_service_sessions
+      MCP_SANDBOX_ROOT: /app/data/mcp_sandbox
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    volumes:
+      # 会话与幂等缓存：容器重建后仍在，周四的持久化测试依赖它
+      - agent_service_sessions:/app/data/agent_service_sessions
+      # 语料：只读挂载宿主机资料，不烘进镜像（镜像内不含内部产品手册）
+      - ./data/raw:/app/data/raw:ro
+      - ./logs:/app/logs
+
+volumes:
+  qdrant_data: {}
+  agent_service_sessions: {}
