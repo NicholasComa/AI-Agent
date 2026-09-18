@@ -117,6 +117,11 @@ curl -s --noproxy '*' http://127.0.0.1:8080/metrics-summary | python -m json.too
 `/health` 只答进程存活，依赖挂了仍 200 且 `status=degraded`。`/ready` 逐依赖判定，
 必需依赖未就绪返回 503（设计行为，非故障）。三者都不参与认证。
 
+**开启了认证（上面 `export AGENT_SERVICE_API_KEY=demo-key`）后，探针以外的所有接口都必须带
+`-H 'Authorization: Bearer demo-key'`，否则返回 401 `missing bearer token`。**
+密钥为空时认证依赖直接放行，带上该头也没有副作用 —— 所以下面各节的示例统一带上它，
+两种配置都能直接用。若回报 401，先确认是不是设了这个变量。
+
 ### RAG 问答
 
 ```bash
@@ -125,6 +130,7 @@ printf '%s' '{"question":"Qdrant 是什么数据库？","min_score":0.0}' > req.
 curl -s -w "\nHTTP %{http_code}\n" --noproxy '*' \
   -X POST http://127.0.0.1:8080/v1/rag/answer \
   -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer demo-key' \
   --data-binary @req.json
 rm req.json
 ```
@@ -138,6 +144,7 @@ rm req.json
 printf '%s' '{"question":"Qdrant 是什么数据库？","min_score":0.0,"stream":true}' > req.json
 curl -s -N --noproxy '*' -X POST http://127.0.0.1:8080/v1/rag/answer \
   -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer demo-key' \
   --data-binary @req.json
 rm req.json
 ```
@@ -151,7 +158,8 @@ rm req.json
 printf '%s' '{"question":"Qdrant 是什么数据库？","min_score":0.0}' > req.json
 for i in 1 2; do
   curl -s -o /dev/null -D - --noproxy '*' -X POST http://127.0.0.1:8080/v1/rag/answer \
-    -H 'Content-Type: application/json' -H 'Idempotency-Key: demo-1' \
+    -H 'Content-Type: application/json' -H 'Authorization: Bearer demo-key' \
+    -H 'Idempotency-Key: demo-1' \
     --data-binary @req.json | grep -i 'HTTP/\|Idempotency'
 done
 rm req.json
@@ -167,6 +175,7 @@ printf '%s' '{"requirement_text":"开发一个电商网站，包含商品浏览�
 curl -s -w "\nHTTP %{http_code}\n" --noproxy '*' \
   -X POST http://127.0.0.1:8080/v1/workflow/requirement-analysis \
   -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer demo-key' \
   --data-binary @wf.json
 rm wf.json
 ```
@@ -180,6 +189,7 @@ printf '%s' '{"answers":["仅 Web 版，不做移动端"]}' > resume.json
 curl -s -w "\nHTTP %{http_code}\n" --noproxy '*' \
   -X POST http://127.0.0.1:8080/v1/workflow/<THREAD_ID>/resume \
   -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer demo-key' \
   --data-binary @resume.json
 rm resume.json
 ```
@@ -191,7 +201,8 @@ AGENT_SERVICE_REQUEST_TIMEOUT_SECONDS=600`。
 
 ```bash
 # Git Bash
-curl -s -w "\nHTTP %{http_code}\n" --noproxy '*' http://127.0.0.1:8080/v1/tools
+curl -s -w "\nHTTP %{http_code}\n" --noproxy '*' \
+  -H 'Authorization: Bearer demo-key' http://127.0.0.1:8080/v1/tools
 ```
 
 MCP 未启用时返回 503 `dependency_unavailable`。启用见本节启动部分。
