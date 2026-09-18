@@ -26,7 +26,12 @@
 全打成 429。413 与 429 断言需要知道服务端上限，因此只在传了
 ``--max-body-bytes`` / ``--rate-limit`` 时执行，否则记为跳过。
 
-退出码 0 表示全部通过；非 0 表示有失败项或脚本自身出错。
+自建子进程之前会检查端口是否空闲。``/health`` 只能证明「这个端口上有服务在
+答」，不能证明「答的是刚起的那个进程」——若端口被旧服务或 compose 容器占着，
+就绪轮询会从占用者拿到 200，整轮断言便打在**它的**配置上。端口冲突时脚本
+直接以退出码 2 终止并指明占用者。
+
+退出码 0 表示全部通过；非 0 表示有失败项或脚本自身出错（2 为前置条件不满足）。
 """
 
 from __future__ import annotations
@@ -161,6 +166,67 @@ class Report:
             print(line)
 
 
+class PortInUseError(RuntimeError):
+    """目标端口已被别的进程占用，脚本不该继续跑。
+
+    典型场景：compose 的 ``api`` 容器仍发布着 8080。此时新起的子进程会因
+    端口冲突退出，而脚本的就绪轮询却能从**那个容器**拿到 ``/health`` 的
+    200——于是整轮验收都打在容器的旧配置上，断言全错但看不出原因。
+    """
+
+
+def _port_owner(host: str, port: int) -> str:
+    """询问本机谁在监听该端口，用于把冲突原因写进报错信息。
+
+    只做只读查询（``netstat`` 取 PID，``tasklist`` 取进程名），不杀任何进程。
+    查不到时返回空串——拿不到名字不影响判定「端口被占」这件事本身。
+    """
+    target = f":{port} "
+    pids: list[str] = []
+    try:
+        netstat = subprocess.run(
+            ["netstat", "-ano", "-p", "TCP"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    for line in netstat.stdout.splitlines():
+        if "LISTENING" not in line or target not in line:
+            continue
+        parts = line.split()
+        if parts and parts[-1].isdigit() and parts[-1] not in pids:
+            pids.append(parts[-1])
+    if not pids:
+        return ""
+
+    names: list[str] = []
+    for pid in pids:
+        try:
+            tasklist = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=15,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        first = tasklist.stdout.strip().splitlines()
+        if not first:
+            continue
+        name = first[0].split(",")[0].strip().strip('"')
+        if name and name not in names:
+            names.append(f"{name}(pid={pid})")
+    return ", ".join(names)
+
+
 class ServerProcess:
     """被脚本托管的 ``serve.py`` 子进程。"""
 
@@ -175,6 +241,22 @@ class ServerProcess:
     @property
     def base_url(self) -> str:
         return f"http://{self.host}:{self.port}"
+
+    def ensure_port_free(self) -> None:
+        """确认端口没被占用，否则抛出 :class:`PortInUseError`。
+
+        必须在 ``start()`` 之前调用：起得来服务的前提是端口真的属于它。若只
+        等 ``/health`` 返回 200 就放行，占用端口的旧进程（例如 compose 容器）
+        会让整轮验收静默地测错对象。
+        """
+        owner = _port_owner(self.host, self.port)
+        if owner:
+            raise PortInUseError(
+                f"端口 {self.host}:{self.port} 已被占用（{owner}）。"
+                f"请先释放：容器占用的执行 `docker compose down`，"
+                f"旧脚本进程占用的执行 `taskkill /F /PID <pid>`；"
+                f"或换一个空闲端口：`--port {self.port + 1}`。"
+            )
 
     def start(self) -> None:
         import os
@@ -228,7 +310,10 @@ class ServerProcess:
             if self._process is not None and self._process.poll() is not None:
                 return False
             try:
-                response = httpx.get(f"{self.base_url}/health", timeout=3.0)
+                # trust_env=False：开发机常配 HTTP(S)_PROXY，httpx 默认会把发往
+                # 127.0.0.1 的探测也送去代理，代理回 502 或断连会让就绪判断永远
+                # 失败，而服务其实早已起来。
+                response = httpx.get(f"{self.base_url}/health", timeout=3.0, trust_env=False)
             except httpx.HTTPError:
                 time.sleep(READY_POLL_SECONDS)
                 continue
@@ -339,52 +424,54 @@ def run_security(client: httpx.Client, report: Report) -> None:
             )
 
     # 判据用「不带令牌的请求是否被拒」推断服务是否启用了认证。
+    #
+    # 请求体刻意**故意非法**（缺必填字段）：这样认证开启时结果必然是 401
+    # （认证依赖排在参数校验之前），认证关闭时结果必然是 422，两种情形都
+    # 在几毫秒内返回、不触碰模型。
+    #
+    # 早期版本发的是合法请求体，导致「认证未启用」时这一条会真的跑完整个
+    # RAG 链路（本机真实模型约 50 秒），被 30 秒客户端超时打断后记成 FAIL，
+    # 报出「未授权拒绝：客户端读超时」这种与实际语义无关的结论。
     anonymous = _safe_post(
         client,
         report,
         "security",
         "未授权拒绝",
         RAG_PATH,
-        {"question": QUESTION, "min_score": 0.0},
+        {},
         timeout=TIMEOUTS.probe,
         headers={"Authorization": ""},
     )
     if anonymous is not None:
+        code = anonymous.json().get("error", {}).get("code")
         if anonymous.status_code == 401:
-            error = anonymous.json().get("error", {})
-            if error.get("code") == "unauthorized" and API_KEY:
+            if code == "unauthorized" and API_KEY:
                 report.passed("security", "未授权拒绝", "401 unauthorized")
-            elif error.get("code") == "unauthorized":
+            elif code == "unauthorized":
                 report.failed(
                     "security",
                     "未授权拒绝",
                     "服务已启用认证，请用 --api-key 传入密钥，否则其余分组也会 401",
                 )
             else:
-                report.failed("security", "未授权拒绝", f"code={error.get('code')}")
-        elif anonymous.status_code == 503 and not API_KEY:
-            # 只有「未配密钥」才允许跳过，且必须是鉴权放行、下游缺依赖这一种解释。
-            # 若报的是别的错误码，说明连鉴权都没跑到，那就是防护失效，不能跳过。
-            code = anonymous.json().get("error", {}).get("code")
-            if code == "dependency_unavailable":
-                report.skipped(
-                    "security",
-                    "未授权拒绝",
-                    "服务未启用认证（AGENT_SERVICE_API_KEY 为空），且当前依赖未就绪",
-                )
-            else:
-                report.failed(
-                    "security",
-                    "未授权拒绝",
-                    f"疑似防护失效：status=503 code={code}",
-                )
+                report.failed("security", "未授权拒绝", f"code={code}")
+        elif anonymous.status_code == 422 and not API_KEY:
+            # 未配密钥 → 认证不启用 → 非法请求体在参数校验阶段被拒。
+            # 这说明「没有认证」是配置使然，而不是防护被绕过。
+            report.skipped(
+                "security",
+                "未授权拒绝",
+                "服务未启用认证（AGENT_SERVICE_API_KEY 为空）；非法请求体已在参数校验阶段被拒（422）",
+            )
         else:
-            # 500 / 502 / 429 / 404 等一律为失败：以前这里记 SKIP，而 SKIP 不进
+            # 500 / 502 / 429 / 404 / 200 等一律为失败：以前这里记 SKIP，而 SKIP 不进
             # report.failures，会让「防护整体失效」拿到退出码 0。
+            # 200 尤其要判失败——非法请求体被放行，说明校验链断了。
             report.failed(
                 "security",
                 "未授权拒绝",
-                f"疑似防护失效：status={anonymous.status_code}，期望 401（或认证关闭时的 503）",
+                f"疑似防护失效：status={anonymous.status_code} code={code}，"
+                f"期望 401（认证开启）或 422（认证关闭）",
             )
 
     if BODY_LIMIT > 0:
@@ -411,15 +498,26 @@ def run_security(client: httpx.Client, report: Report) -> None:
         report.skipped("security", "超限请求体 -> 413", "未给 --max-body-bytes，无法确定服务端上限")
 
     if RATE_LIMIT > 0:
+        # 打配额用**故意非法**的小请求体，让前 RATE_LIMIT 次在参数校验阶段
+        # 几毫秒返回 422，只有第 RATE_LIMIT+1 次才由限流依赖抛 429。
+        #
+        # 早期版本发的是合法 RAG 请求：真实 qwen3（CPU）单次约 50 秒，而循环
+        # 的客户端超时只有 30 秒，于是第一次请求就报「客户端读超时」，报出的
+        # 结论与「配额是否生效」毫无关系。
+        #
+        # 这里不依赖「认证早于参数校验」那套顺序：限流本身也是路由依赖，与
+        # 认证同批注册，同样在请求体解析之前执行，因此非法体照样扣配额。
         blocked = None
-        for _ in range(RATE_LIMIT + 2):
+        attempts = 0
+        for attempt in range(RATE_LIMIT + 2):
+            attempts = attempt + 1
             response = _safe_post(
                 client,
                 report,
                 "security",
                 "配额耗尽 -> 429",
                 RAG_PATH,
-                {"question": QUESTION, "min_score": 0.0},
+                {},
                 timeout=TIMEOUTS.probe,
             )
             if response is None:
@@ -442,7 +540,11 @@ def run_security(client: httpx.Client, report: Report) -> None:
             # httpx 的 Headers 大小写不敏感，可直接用原始大小写取值。
             retry_after = blocked.headers.get("Retry-After")
             if error.get("code") == "rate_limited" and retry_after:
-                report.passed("security", "配额耗尽 -> 429", f"Retry-After={retry_after}")
+                report.passed(
+                    "security",
+                    "配额耗尽 -> 429",
+                    f"第 {attempts} 次被限流，Retry-After={retry_after}",
+                )
             else:
                 report.failed(
                     "security",
@@ -451,6 +553,54 @@ def run_security(client: httpx.Client, report: Report) -> None:
                 )
     else:
         report.skipped("security", "配额耗尽 -> 429", "未给 --rate-limit，无法确定服务端配额")
+
+
+def warn_mismatched_target(client: httpx.Client, report: Report, args: argparse.Namespace) -> None:
+    """``--no-spawn`` 时探一下被测服务是否真带着本次要用的配置。
+
+    自建子进程能靠注入环境变量保证配置一致；``--no-spawn`` 则只能相信外面
+    那个服务是对的。而最常见的错法是连到仍在跑的 compose 容器上——它的
+    ``AGENT_SERVICE_API_KEY`` / ``MAX_BODY_BYTES`` / ``RATE_LIMIT_PER_MINUTE``
+    都是缺省值，会让认证、413、429 三条断言给出与「防护失效」无关的结论。
+
+    这里只做**只读**探测：用一个缺必填字段的小请求体打业务路由，从响应码
+    反推认证是否开着。命中不一致时如实报告，不中止脚本——用户可能就是想
+    验当前这个服务。
+    """
+    if not (API_KEY or BODY_LIMIT):
+        return
+
+    try:
+        probe = client.post(RAG_PATH, json={}, timeout=TIMEOUTS.probe)
+    except httpx.HTTPError as exc:
+        report.failed(
+            "security", "被测目标与本次配置一致", f"探测失败：{type(exc).__name__}: {exc}"
+        )
+        return
+
+    if API_KEY and probe.status_code != 401:
+        report.failed(
+            "security",
+            "被测目标与本次配置一致",
+            f"传了 --api-key 但 {args.host}:{args.port} 未要求认证"
+            f"（status={probe.status_code}）——很可能连到了仍以缺省配置运行的旧服务或容器"
+            f"（容器占用端口时先 `docker compose down`）",
+        )
+        return
+
+    if not API_KEY and probe.status_code == 401:
+        report.failed(
+            "security",
+            "被测目标与本次配置一致",
+            f"{args.host}:{args.port} 要求认证但本次未传 --api-key，后续业务分组会全部 401",
+        )
+        return
+
+    report.passed(
+        "security",
+        "被测目标与本次配置一致",
+        f"--no-spawn 目标认证口径吻合（status={probe.status_code}）",
+    )
 
 
 def _qdrant_ready(client: httpx.Client) -> bool:
@@ -833,6 +983,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.no_spawn:
         server = ServerProcess(args.port, args.host, extra_env)
+        try:
+            server.ensure_port_free()
+        except PortInUseError as exc:
+            # 端口被占时必须直接退出：否则就绪轮询会从占用者那里拿到 200，
+            # 整轮断言都打在别人的配置上，失败信息与真实原因毫无关系。
+            print(f"[FAIL] {exc}")
+            return 2
         server.start()
         if not server.wait_until_ready():
             print("[FAIL] 服务未能在限时内就绪")
@@ -847,7 +1004,11 @@ def main(argv: list[str] | None = None) -> int:
     base_url = server.base_url if server else f"http://{args.host}:{args.port}"
     exit_code = 0
     try:
-        with httpx.Client(base_url=base_url, timeout=TIMEOUTS.rest) as client:
+        # trust_env=False：见 ServerProcess.wait_until_ready 的说明——本机若配了
+        # HTTP(S)_PROXY，走代理会把本机请求变成 502。
+        with httpx.Client(base_url=base_url, timeout=TIMEOUTS.rest, trust_env=False) as client:
+            if server is None:
+                warn_mismatched_target(client, report, args)
             if _selected(groups, "probe"):
                 run_probe(client, report)
             if _selected(groups, "rag"):
