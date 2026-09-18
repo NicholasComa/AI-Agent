@@ -65,7 +65,9 @@ def route_key(path: str) -> str:
     Returns:
         归一化路由键，如 ``/v1/tools/:name/call``；无法识别时返回原路径。
     """
-    parts = [segment for segment in path.split("/") if segment] #按 " / " 切分路径得到列表，然后遍历，过滤掉空字符串，得到非空的路径段列表
+    parts = [
+        segment for segment in path.split("/") if segment
+    ]  # 按 " / " 切分路径得到列表，然后遍历，过滤掉空字符串，得到非空的路径段列表
     if len(parts) >= 3 and parts[0] == "v1" and parts[1] == "tools" and parts[-1] == "call":
         return "/v1/tools/:name/call"
     return path or ROUTE_UNKNOWN
@@ -329,7 +331,8 @@ def _registry_of(scope: dict[str, Any]) -> MetricsRegistry | None:
     deps = getattr(getattr(application, "state", None), "deps", None)
     return getattr(deps, "metrics", None)
 
-#明确公开接口，避免import * 污染
+
+# 明确公开接口，避免import * 污染
 __all__ = [
     "LATENCY_BUCKETS_MS",
     "ROUTE_UNKNOWN",
