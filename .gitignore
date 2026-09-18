@@ -115,3 +115,6 @@ data/agent_service_sessions/
 
 # 服务冒烟脚本的临时语料
 data/service_smoke/
+
+# 压测脚本超时组的工作目录（运行期自建语料与会话，跑完即弃）
+data/week9_load_tmp/
