@@ -121,6 +121,8 @@ def idempotent_replay(deps: AgentServiceDeps, request: Request, body: Any) -> JS
     entry = store.lookup(key, body)
     if entry is None:
         return None
+    # 命中数进指标：它是「客户端重试率」最直接的观测，也是幂等是否生效的证据。
+    deps.metrics.record_idempotency_replay()
     return JSONResponse(
         status_code=entry.status_code,
         content=entry.payload,

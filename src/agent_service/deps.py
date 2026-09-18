@@ -17,6 +17,7 @@ from typing import Annotated, Any
 from fastapi import Depends, Request
 
 from .errors import ErrorCode, ServiceError
+from .metrics import MetricsRegistry
 from .schemas import Backend, DependencyState
 from .settings import AgentServiceSettings
 
@@ -59,6 +60,7 @@ class AgentServiceDeps:
         gate: 服务级并发闸门，容量取自 ``settings.max_concurrency``。
         rate_limiter: 按客户端计数的令牌桶；由启动阶段按配置建立，缺省为
             ``None``，首次限流检查时会按当前配置补建。
+        metrics: 进程内指标计数器，供 ``/metrics-summary`` 读取。
         dependencies: 逐依赖探活结果，探针接口直接读取。
         closers: 释放钩子，按注册逆序执行。
     """
@@ -75,6 +77,7 @@ class AgentServiceDeps:
     sessions: Any = None
     gate: asyncio.Semaphore = field(init=False)
     rate_limiter: Any = None
+    metrics: MetricsRegistry = field(default_factory=MetricsRegistry)
     dependencies: list[DependencyState] = field(default_factory=list)
     closers: list[Closer] = field(default_factory=list)
 

@@ -49,13 +49,60 @@ def _frame(payload: dict[str, Any]) -> dict[str, str]:
 
 
 def build_generator(request_body: RagQueryRequest, deps: ServiceDeps) -> RagGenerator:
-    """按请求参数组装生成器；依赖缺失时抛 503。"""
+    """按请求参数组装生成器；依赖缺失时抛 503。
+
+    这里把检索器与对话函数各包一层计数钩子，而不是在 :class:`RagGenerator`
+    内部埋点——生成器属于 RAG 领域层，不该知道 HTTP 服务的指标口径。钩子只
+    做累加，不改变返回结构，因此对拒答、重试、引用校验等分支完全透明。
+    """
+    rag = _metered_retriever(deps, deps.require("rag"), min_score=request_body.min_score)
+    chat = _metered_chat(deps, deps.require("chat_fn"))
     return RagGenerator(
-        deps.require("rag"),
-        deps.require("chat_fn"),
+        rag,
+        chat,
         top_k=request_body.top_k,
         min_score=request_body.min_score,
     )
+
+
+def _metered_retriever(deps: ServiceDeps, rag: Any, *, min_score: float) -> Any:
+    """包装检索器：记录检索次数与命中率。
+
+    命中判定与生成链路的拒答口径一致——召回非空**且** Top1 分数达到
+    ``min_score``。只按「召回非空」统计会把低分拒答也算成命中，指标虚高。
+
+    Args:
+        deps: 依赖容器，取指标计数器。
+        rag: 真实检索器，其 ``retrieve`` 签名与
+            :meth:`rag.knowledge_rag.JwipcKnowledgeRAG.retrieve` 一致。
+        min_score: 本次请求使用的拒答阈值，与生成器保持一致。
+    """
+
+    class _MeteredRetriever:
+        def __init__(self, inner: Any) -> None:
+            self._inner = inner
+
+        def retrieve(self, query: str, top_k: int = 3, **kwargs: Any) -> Any:
+            results = self._inner.retrieve(query, top_k=top_k, **kwargs)
+            hit = bool(results) and results[0].score >= min_score
+            deps.metrics.record_rag_query(hit=hit)
+            return results
+
+        def __getattr__(self, name: str) -> Any:
+            # 其余属性（如 count / index）原样透传，避免包装层变成窄接口。
+            return getattr(self._inner, name)
+
+    return _MeteredRetriever(rag)
+
+
+def _metered_chat(deps: ServiceDeps, chat: Any) -> Any:
+    """包装对话函数：按**实际调用次数**累加，重试会各计一次。"""
+
+    async def _call(messages: list[dict[str, str]]) -> str:
+        deps.metrics.record_llm_call()
+        return await chat(messages)
+
+    return _call
 
 
 async def rag_frames(

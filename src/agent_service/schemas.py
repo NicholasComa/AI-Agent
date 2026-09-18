@@ -78,6 +78,45 @@ class ServiceHealthResponse(BaseModel):
     request_id: str | None = None
 
 
+class ServiceMetricsSummaryResponse(BaseModel):
+    """``GET /metrics-summary`` 响应体：进程内累计指标快照。
+
+    计数器随进程生命周期累加，重启即归零——这是刻意的：本接口服务于「当前这
+    个实例现在健康吗」，历史趋势应由第 10 周的 Trace 与评测链路承担。
+
+    Attributes:
+        service: 服务名，便于多实例聚合时区分来源。
+        uptime_seconds: 已运行秒数，用于判断计数是否覆盖了完整观察窗口。
+        requests_total: ``路由|状态码`` 到次数的映射，保留最细粒度。
+        requests_by_route: 按路由聚合的请求数。
+        requests_by_status: 按状态码聚合的请求数。
+        in_flight: 采样瞬间仍在处理中的请求数。
+        latency_ms: 端到端延迟统计，含 ``avg`` / ``p95`` / ``samples``。
+        llm_calls: 累计模型调用次数（含重试，按实际调用次数计）。
+        rag_queries: 累计知识库检索次数。
+        rag_hit_rate: 检索命中率，0.0-1.0；无检索时为 0.0。
+        errors_by_code: 统一错误码到次数的映射。
+        idempotency_replays: 幂等缓存命中次数。
+        request_id: 与响应头 ``X-Request-ID`` 同源。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    service: str
+    uptime_seconds: float = Field(..., ge=0)
+    requests_total: dict[str, int] = Field(default_factory=dict)
+    requests_by_route: dict[str, int] = Field(default_factory=dict)
+    requests_by_status: dict[str, int] = Field(default_factory=dict)
+    in_flight: int = Field(..., ge=0)
+    latency_ms: dict[str, float] = Field(default_factory=dict)
+    llm_calls: int = Field(..., ge=0)
+    rag_queries: int = Field(..., ge=0)
+    rag_hit_rate: float = Field(..., ge=0.0, le=1.0)
+    errors_by_code: dict[str, int] = Field(default_factory=dict)
+    idempotency_replays: int = Field(..., ge=0)
+    request_id: str | None = None
+
+
 class ServiceReadyResponse(BaseModel):
     """``GET /ready`` 响应体：逐依赖给出可读结论。
 

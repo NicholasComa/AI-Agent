@@ -39,6 +39,7 @@ from .errors import (
     status_code_to_error_code,
 )
 from .lifespan import UNKNOWN_VERSION, service_lifespan
+from .metrics import MetricsASGIMiddleware
 from .routes import health_router, rag_router, tools_router, workflow_router
 from .security import BodySizeLimitMiddleware, enforce_rate_limit, require_api_key
 
@@ -96,12 +97,14 @@ def create_agent_service_app(
     if deps is not None:
         app.state.deps = deps
 
-    # 三个中间件都是纯 ASGI 实现，不缓存响应体，因此与 SSE 流式端点兼容。
-    # 后添加的处于外层，最终请求路径为 RequestId -> AccessLog -> 大小限制 -> 路由：
-    # request_id 先注入，413 才能带上它；访问日志在外层，被拒的请求也能留下记录。
+    # 四个中间件都是纯 ASGI 实现，不缓存响应体，因此与 SSE 流式端点兼容。
+    # 后添加的处于外层，最终请求路径为 Metrics -> RequestId -> AccessLog ->
+    # 大小限制 -> 路由：指标在最外层，被认证/限流/体积限制拒掉的请求也计入统计；
+    # request_id 先于业务注入，413 才能带上它；访问日志被拒的请求也留记录。
     app.add_middleware(BodySizeLimitMiddleware)
     app.add_middleware(AccessLogASGIMiddleware)
     app.add_middleware(RequestIdASGIMiddleware)
+    app.add_middleware(MetricsASGIMiddleware)
 
     _register_exception_handlers(app)
     app.include_router(health_router)
@@ -112,10 +115,22 @@ def create_agent_service_app(
 
 
 def _register_exception_handlers(app: FastAPI) -> None:
-    """把各类异常统一收敛到同一个错误信封。"""
+    """把各类异常统一收敛到同一个错误信封。
+
+    每个处理器都会把错误码计入指标。这里也是唯一能把「错误码 -> 计数」记全的
+    位置：业务异常、参数校验、Starlette 内建异常与未捕获异常最终都汇到这里。
+    """
+
+    def _count(request: Request, code: str) -> None:
+        """给当前请求的容器累加一次错误码。"""
+        deps = getattr(request.app.state, "deps", None)
+        metrics = getattr(deps, "metrics", None)
+        if metrics is not None:
+            metrics.record_error(code)
 
     @app.exception_handler(ServiceError)
     async def _service_error(request: Request, exc: ServiceError) -> JSONResponse:
+        _count(request, exc.code.value)
         return exc.to_response(get_request_id(request))
 
     @app.exception_handler(RequestValidationError)
@@ -124,6 +139,7 @@ def _register_exception_handlers(app: FastAPI) -> None:
         first = errors[0] if errors else {}
         location = ".".join(str(part) for part in first.get("loc", ()))
         message = f"invalid request: {location} {first.get('msg', '')}".strip()
+        _count(request, ErrorCode.INVALID_ARGUMENT.value)
         return error_response(
             _HTTP_UNPROCESSABLE,
             ErrorCode.INVALID_ARGUMENT.value,
@@ -135,6 +151,7 @@ def _register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(StarletteHTTPException)
     async def _http_error(request: Request, exc: StarletteHTTPException) -> JSONResponse:
         code = status_code_to_error_code(exc.status_code)
+        _count(request, code.value)
         return error_response(
             exc.status_code,
             code.value,
@@ -150,6 +167,7 @@ def _register_exception_handlers(app: FastAPI) -> None:
             request.url.path,
             error_detail_from_exception(exc),
         )
+        _count(request, ErrorCode.INTERNAL.value)
         return error_response(
             _HTTP_INTERNAL,
             ErrorCode.INTERNAL.value,
