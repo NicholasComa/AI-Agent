@@ -62,7 +62,38 @@ async def test_ready_covers_every_dependency_layer(harness: Harness) -> None:
     """探针要覆盖全部依赖层，缺一层就等于把排障推给日志。"""
     body = (await harness.client.get("/ready")).json()
     names = {item["name"] for item in body["dependencies"]}
-    assert names == {"session_store", "config", "qdrant", "llm", "workflow", "mcp"}
+    assert names == {
+        "session_store",
+        "config",
+        "qdrant",
+        "llm",
+        "workflow",
+        "mcp",
+        "observability",
+    }
+
+
+async def test_ready_dependency_order_matches_documented_scan_order(harness: Harness) -> None:
+    """``/ready`` 的依赖顺序是约定的一部分，不能被无声改动。
+
+    上一用例用集合比较，只看「有没有缺层」；顺序错了照样通过。而
+    ``routes/health.py`` 的 ``_READY_SCAN_ORDER`` 声明顺序反映真实组装顺序，
+    评测脚本与数据集都按这个顺序做列表比较，因此这里补一条逐位断言。
+
+    顺序被改动的典型来源是新增依赖层：忘了同步 ``_READY_SCAN_ORDER``，该层会被
+    ``_ordered_dependencies`` 追加到末尾，功能照跑但顺序断言全挂。
+    """
+    body = (await harness.client.get("/ready")).json()
+    names = [item["name"] for item in body["dependencies"]]
+    assert names == [
+        "observability",
+        "session_store",
+        "config",
+        "qdrant",
+        "llm",
+        "mcp",
+        "workflow",
+    ]
 
 
 async def test_unknown_path_uses_unified_error_envelope(harness: Harness) -> None:

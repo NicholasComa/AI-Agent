@@ -13,6 +13,8 @@
 - MCP 未启用时工具接口返回 503；
 - 未知路径是否走统一错误信封。
 
+观测层以本地 JSONL 后端接入（不联网），就绪明细里包含该层。
+
 ``--real`` 时按 ``.env`` 接真实 Ollama 与 Qdrant；构造失败自动回退替身，并在
 输出里说明原因，保证脚本在依赖未就绪时仍然能跑。
 """
@@ -41,6 +43,7 @@ from agent_service import (  # noqa: E402
 )
 from graph import build_requirement_workflow  # noqa: E402
 from graph.fakes import fake_chat  # noqa: E402
+from observability import ObservabilityConfig, build_tracer  # noqa: E402
 from rag.embeddings import FakeEmbedding  # noqa: E402
 from rag.knowledge_rag import JwipcKnowledgeRAG, build_qdrant_config  # noqa: E402
 from rag.qdrant_store import QdrantConfig  # noqa: E402
@@ -141,7 +144,18 @@ def _build_deps(workdir: Path, *, real: bool) -> tuple[AgentServiceDeps, SmokeCh
     deps.rag = rag
     deps.chat_fn = chat
     deps.sessions = SessionStore(settings.session_dir)
+    # 追踪器落盘到 workdir 下，不能沿用默认的仓库内 logs/traces。
+    trace_dir = workdir / "traces"
+    deps.tracer = build_tracer(
+        ObservabilityConfig(enabled=True, backend="local", trace_dir=trace_dir)
+    )
     deps.graph = build_requirement_workflow(chat_fn=chat, rag=rag)
+    deps.set_dependency(
+        "observability",
+        ready=True,
+        required=False,
+        detail=f"backend={deps.tracer.backend_name} dir={trace_dir}",
+    )
     deps.set_dependency("session_store", ready=True, required=True, detail="smoke store")
     deps.set_dependency("config", ready=True, required=True, detail="smoke config")
     deps.set_dependency("qdrant", ready=True, required=True, detail="smoke qdrant")
@@ -174,13 +188,16 @@ async def _run(client: httpx.AsyncClient, deps: AgentServiceDeps, chat: SmokeCha
 
     ready = await client.get("/ready")
     names = [item["name"] for item in ready.json()["dependencies"]]
+    # 这里刻意抄一份字面量而不是引用 health._READY_SCAN_ORDER：
+    # 引用同一个常量会让断言退化成恒真，抄一份才能在顺序被误改时报出来。
     if ready.status_code == 200 and names == [
+        "observability",
         "session_store",
         "config",
         "qdrant",
         "llm",
-        "workflow",
         "mcp",
+        "workflow",
     ]:
         _ok("/ready", f"status={ready.json()['status']} deps={len(names)}")
     else:

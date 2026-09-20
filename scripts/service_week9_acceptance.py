@@ -378,7 +378,15 @@ def run_probe(client: httpx.Client, report: Report) -> None:
         return
     body = ready.json()
     names = [item["name"] for item in body["dependencies"]]
-    expected = ["session_store", "config", "qdrant", "llm", "mcp", "workflow"]
+    expected = [
+        "observability",
+        "session_store",
+        "config",
+        "qdrant",
+        "llm",
+        "mcp",
+        "workflow",
+    ]
     if names != expected:
         report.failed("probe", "/ready 依赖顺序", f"got={names}")
     elif ready.status_code == 200:

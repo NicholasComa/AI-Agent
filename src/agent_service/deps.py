@@ -33,6 +33,7 @@ _LAYER_OF: dict[str, str] = {
     "graph": "workflow",
     "mcp": "mcp",
     "sessions": "session_store",
+    "tracer": "observability",
 }
 """容器字段名到探活层名的映射。
 
@@ -57,6 +58,7 @@ class AgentServiceDeps:
         graph: 已编译的 LangGraph 工作流；未就绪时为 ``None``。
         mcp: 已握手的 MCP 会话；未启用或失败时为 ``None``。
         sessions: 会话与幂等存储；未就绪时为 ``None``。
+        tracer: 追踪器；构造不会失败，未接线时才为 ``None``。
         gate: 服务级并发闸门，容量取自 ``settings.max_concurrency``。
         rate_limiter: 按客户端计数的令牌桶；由启动阶段按配置建立，缺省为
             ``None``，首次限流检查时会按当前配置补建。
@@ -75,6 +77,7 @@ class AgentServiceDeps:
     graph: Any = None
     mcp: Any = None
     sessions: Any = None
+    tracer: Any = None
     gate: asyncio.Semaphore = field(init=False)
     rate_limiter: Any = None
     metrics: MetricsRegistry = field(default_factory=MetricsRegistry)

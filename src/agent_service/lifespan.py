@@ -2,13 +2,13 @@
 
 组装顺序:
 
-    运行准备（.env + 日志）-> 配置 -> 会话存储 -> Qdrant 与知识库 ->
+    运行准备（.env + 日志）-> 追踪 -> 配置 -> 会话存储 -> Qdrant 与知识库 ->
     LlmClient -> MCP 会话 -> 工作流图
 
 每一步都独立捕获异常并写入 :class:`agent_service.schemas.DependencyState`：
 - 必需依赖（会话存储、配置、Qdrant、模型接口、工作流）不可用时，服务照常
   启动，由 ``/health`` 与 ``/ready`` 给出 ``degraded`` 与具体原因；
-- 可选依赖（MCP）默认不启用，避免无意义地拉起子进程。
+- 可选依赖（MCP、追踪）默认不启用，避免无意义地拉起子进程。
 
 真实连接信息沿用项目既有配置源：模型接口读 ``API_BASE_URL`` / ``MODEL_NAME``，
 Qdrant 读 ``QDRANT_*``，不在服务层重复声明。``.env`` 只在启动阶段载入，导入本
@@ -31,6 +31,7 @@ from graph import ChatFn, build_requirement_workflow, make_fake_chat
 from jwipc_dev_mcp_server.client import connect_stdio
 from llm_client import LlmClient
 from logging_config import configure_logging
+from observability import build_tracer
 from rag.embeddings import get_embedding
 from rag.knowledge_rag import JwipcKnowledgeRAG, build_qdrant_config
 
@@ -69,6 +70,35 @@ def _prepare_runtime() -> None:
         logger.warning("failed to configure structured logging: %s", exc)
         return
     configure_logging(config.log_level, config.log_format)
+
+
+def _build_tracer(deps: AgentServiceDeps) -> None:
+    """建立追踪器。
+
+    追踪是旁路能力，不进 ``_REQUIRED`` 集合：无论远端上报是否可用，服务都应当
+    正常提供服务，只有 ``required=False`` 的探活明细会记录实际后端。
+
+    :func:`observability.build_tracer` 自身保证永不抛异常——SDK 缺失、凭据不全或
+    远端初始化失败都会换成降级后端（本地 JSONL 或内存），因此这里不需要再包一层
+    ``try``。降级原因写进探活明细，探针接口即可直接读出「当前到底在往哪写」。
+
+    在组装链最前面调用还有一层顺序理由：释放钩子按注册逆序执行，最先注册的
+    最后释放，追踪器因此能在其它资源关闭期间继续可用。
+    """
+    tracer = build_tracer()
+    deps.tracer = tracer
+    deps.add_closer(tracer.aclose)
+
+    reason = tracer.degraded_reason
+    detail = f"backend={tracer.backend_name} dir={tracer.config.trace_dir}"
+    if reason:
+        detail = f"{detail} degraded={reason}"
+    deps.set_dependency(
+        "observability",
+        ready=reason is None,
+        required=_OPTIONAL,
+        detail=detail,
+    )
 
 
 def _brief(exc: BaseException, *, limit: int = 160) -> str:
@@ -298,6 +328,10 @@ async def build_deps(
     _prepare_runtime()
     resolved = settings or AgentServiceSettings()
     deps = AgentServiceDeps.create(resolved, version=version)
+
+    # 追踪器最先建立、最后释放：释放钩子按注册逆序执行，先注册才能让它在其它
+    # 资源关闭期间仍然可用。它不依赖任何外部连接，无需参与降级流程。
+    _build_tracer(deps)
 
     # 限流器不依赖任何外部连接，构造不会失败，因此不参与降级流程。
     deps.rate_limiter = TokenBucketRateLimiter(capacity=resolved.rate_limit_per_minute)

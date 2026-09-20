@@ -33,6 +33,7 @@ from agent_service import (
 )
 from graph import build_requirement_workflow
 from graph.fakes import fake_chat
+from observability import ObservabilityConfig, Tracer, build_tracer
 from rag.embeddings import FakeEmbedding
 from rag.knowledge_rag import JwipcKnowledgeRAG
 from rag.qdrant_store import QdrantConfig
@@ -190,6 +191,21 @@ def build_rag(tmp_path: Path) -> JwipcKnowledgeRAG:
     return rag
 
 
+def build_test_tracer(tmp_path: Path) -> Tracer:
+    """建立指向 ``tmp_path`` 的本地追踪器。
+
+    **必须显式指定落盘目录**：``ObservabilityConfig`` 的默认值是仓库内的
+    ``logs/traces``，不覆盖的话每跑一次测试都会往仓库里写文件，症状是「测试
+    全绿但工作区莫名变脏」。后端固定为 ``local``，测试不联网。
+    """
+    config = ObservabilityConfig(
+        enabled=True,
+        backend="local",
+        trace_dir=tmp_path / "traces",
+    )
+    return build_tracer(config)
+
+
 def build_deps(
     tmp_path: Path,
     *,
@@ -205,6 +221,7 @@ def build_deps(
     deps.chat_fn = chat
     deps.sessions = SessionStore(resolved.session_dir)
     deps.mcp = mcp
+    deps.tracer = build_test_tracer(tmp_path)
     deps.graph = build_requirement_workflow(chat_fn=chat, rag=deps.rag)
     deps.set_dependency("session_store", ready=True, required=True, detail="test store")
     deps.set_dependency("config", ready=True, required=True, detail="test config")
@@ -212,6 +229,12 @@ def build_deps(
     deps.set_dependency("llm", ready=True, required=True, detail="fake chat")
     deps.set_dependency("workflow", ready=True, required=True, detail="fake chat")
     deps.set_dependency("mcp", ready=mcp is not None, required=False, detail="test mcp")
+    deps.set_dependency(
+        "observability",
+        ready=True,
+        required=False,
+        detail=f"backend={deps.tracer.backend_name} dir={tmp_path / 'traces'}",
+    )
     return deps
 
 

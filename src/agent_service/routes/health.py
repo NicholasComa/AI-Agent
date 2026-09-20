@@ -32,12 +32,24 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["ops"])
 
 
-_READY_SCAN_ORDER = ("session_store", "config", "qdrant", "llm", "mcp", "workflow")
+_READY_SCAN_ORDER = (
+    "observability",
+    "session_store",
+    "config",
+    "qdrant",
+    "llm",
+    "mcp",
+    "workflow",
+)
 """``/ready`` 响应里依赖的展示顺序。
 
 固定顺序让「依赖链是否完整」可以用一次字符串比较验证——评测脚本与第 10 周的
 数据集都能直接断言，不必写集合比较。顺序本身也反映真实组装顺序（见
 :mod:`agent_service.lifespan`）。
+
+``observability`` 排在最前，因为组装链里 :func:`agent_service.lifespan._build_tracer`
+是第一个被调用的——释放钩子按注册逆序执行，最先注册的追踪器因此能活到其它资源
+全部关闭之后，这一位置不能在响应里被打乱。
 """
 
 
