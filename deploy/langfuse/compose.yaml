@@ -1,0 +1,185 @@
+# 自托管 Langfuse：docker compose up -d
+#
+# 本文件是官方 docker-compose.yml 的精简改写版，改动只有三处，其余与官方一致：
+#
+# 1. 镜像名带 ${DOCKER_MIRROR} 前缀。官方模板用 docker.langfuse.com，该域名只是
+#    拉取记录端点（由 Reo.dev 运营），最终仍回 Docker Hub 取镜像，因此在国内网络
+#    下不通。改走镜像源即可，镜像内容与官方完全一致。
+# 2. 密钥与初始化参数一律从同目录的 .env 读取，不在本文件里写明文。官方模板把
+#    默认口令直接内联（postgres/postgres、clickhouse/clickhouse 等），照抄会留下
+#    一批弱口令。
+# 3. 打开 LANGFUSE_INIT_* 免注册初始化：实例首次启动时自动建组织、项目、用户，
+#    并写入 .env 里指定的那对 API 密钥。这样不需要在浏览器里注册账号再回来拷
+#    密钥，密钥也是可复现的固定值，便于写进冒烟脚本与测试。
+#
+# 六个服务：langfuse-web（UI 与 API）、langfuse-worker（后台消费事件）、postgres
+# （事务数据）、clickhouse（trace/observation/score 的 OLAP 存储）、redis（缓存与
+# 队列）、minio（S3 兼容对象存储，事件先落这里再由 worker 入库）。
+#
+# 端口只暴露必要的：web 的 3000 供宿主机访问，minio 的 9090 用于多模态直传；
+# 其余一律绑 127.0.0.1，仅本机可连。
+
+name: langfuse
+
+x-langfuse-common-env: &langfuse-common-env
+  NEXTAUTH_URL: http://localhost:3000
+  DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:?deploy/langfuse/.env 缺少 POSTGRES_PASSWORD}@postgres:5432/postgres
+  SALT: ${SALT:?deploy/langfuse/.env 缺少 SALT}
+  ENCRYPTION_KEY: ${ENCRYPTION_KEY:?deploy/langfuse/.env 缺少 ENCRYPTION_KEY}
+  # 关闭匿名遥测：自托管的意义之一就是数据不出本机
+  TELEMETRY_ENABLED: "false"
+  CLICKHOUSE_URL: http://clickhouse:8123
+  CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+  CLICKHOUSE_USER: clickhouse
+  CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?deploy/langfuse/.env 缺少 CLICKHOUSE_PASSWORD}
+  CLICKHOUSE_CLUSTER_ENABLED: "false"
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  REDIS_AUTH: ${REDIS_AUTH:?deploy/langfuse/.env 缺少 REDIS_AUTH}
+  LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+  LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minio}
+  LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?deploy/langfuse/.env 缺少 MINIO_ROOT_PASSWORD}
+  LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+  LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+  LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+  LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+  LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minio}
+  LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?deploy/langfuse/.env 缺少 MINIO_ROOT_PASSWORD}
+  # worker 与 web 都在 compose 网络内，走服务名；web 的对外上传地址在下面单独覆盖
+  LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://minio:9000
+  LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+  LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+  # 显式给 Node 堆上限：默认 1.7 GiB，容器无内存限制时会按宿主机内存推算，
+  # 两者都可能与本机实际可用内存不匹配
+  NODE_OPTIONS: --max-old-space-size=2048
+
+x-langfuse-depends-on: &langfuse-depends-on
+  postgres:
+    condition: service_healthy
+  minio:
+    condition: service_healthy
+  redis:
+    condition: service_healthy
+  clickhouse:
+    condition: service_healthy
+
+services:
+  langfuse-web:
+    image: ${DOCKER_MIRROR:-docker.io/}langfuse/langfuse:4
+    restart: always
+    depends_on: *langfuse-depends-on
+    ports:
+      - "3000:3000"
+    environment:
+      <<: *langfuse-common-env
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?deploy/langfuse/.env 缺少 NEXTAUTH_SECRET}
+      # 浏览器直传多模态文件时走宿主机的 9090，容器内部再转 minio:9000
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://localhost:9090
+      LANGFUSE_S3_MEDIA_UPLOAD_INTERNAL_ENDPOINT: http://minio:9000
+      # 免注册初始化：仅在实例尚无组织时执行一次；值在 .env 里不带引号
+      LANGFUSE_INIT_ORG_ID: ${LANGFUSE_INIT_ORG_ID:-}
+      LANGFUSE_INIT_ORG_NAME: ${LANGFUSE_INIT_ORG_NAME:-}
+      LANGFUSE_INIT_PROJECT_ID: ${LANGFUSE_INIT_PROJECT_ID:-}
+      LANGFUSE_INIT_PROJECT_NAME: ${LANGFUSE_INIT_PROJECT_NAME:-}
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:-}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_INIT_PROJECT_SECRET_KEY:-}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-}
+      LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME:-}
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-}
+
+  langfuse-worker:
+    image: ${DOCKER_MIRROR:-docker.io/}langfuse/langfuse-worker:4
+    restart: always
+    depends_on: *langfuse-depends-on
+    ports:
+      - "127.0.0.1:3030:3030"
+    environment: *langfuse-common-env
+
+  clickhouse:
+    image: ${DOCKER_MIRROR:-docker.io/}clickhouse/clickhouse-server:25.12
+    restart: always
+    user: "101:101"
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?deploy/langfuse/.env 缺少 CLICKHOUSE_PASSWORD}
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - clickhouse_logs:/var/log/clickhouse-server
+    ports:
+      - "127.0.0.1:8123:8123"
+      - "127.0.0.1:9000:9000"
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 1s
+
+  minio:
+    image: cgr.dev/chainguard/minio
+    restart: always
+    entrypoint: sh
+    # 启动前先建好 langfuse 桶，避免 web 首次写入事件时桶不存在
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?deploy/langfuse/.env 缺少 MINIO_ROOT_PASSWORD}
+    ports:
+      - "9090:9000"
+      - "127.0.0.1:9091:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 1s
+      timeout: 5s
+      retries: 5
+      start_period: 1s
+
+  redis:
+    image: ${DOCKER_MIRROR:-docker.io/}library/redis:7
+    restart: always
+    command: >
+      --requirepass ${REDIS_AUTH:?deploy/langfuse/.env 缺少 REDIS_AUTH}
+      --maxmemory-policy noeviction
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      # 设了 requirepass 后裸 `redis-cli ping` 会回 NOAUTH，必须带口令再判 PONG
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$REDIS_AUTH\" ping | grep -q PONG"]
+      interval: 3s
+      timeout: 10s
+      retries: 10
+    environment:
+      REDIS_AUTH: ${REDIS_AUTH:?deploy/langfuse/.env 缺少 REDIS_AUTH}
+
+  postgres:
+    image: ${DOCKER_MIRROR:-docker.io/}library/postgres:17
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?deploy/langfuse/.env 缺少 POSTGRES_PASSWORD}
+      POSTGRES_DB: postgres
+      TZ: UTC
+      PGTZ: UTC
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
+  clickhouse_data:
+  clickhouse_logs:
+  minio_data:
+  redis_data:
