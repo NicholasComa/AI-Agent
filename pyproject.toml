@@ -8,6 +8,7 @@ dependencies = [
     "fastapi[standard]>=0.139.2",
     "httpx>=0.28.1",
     "langchain>=1.3.14",
+    "langfuse>=4,<5",
     "langgraph>=1.2.10",
     "mcp>=1.29,<2",
     "numpy>=2.5.2",
@@ -70,6 +71,8 @@ ignore = [
 "scripts/mcp_week7_smoke.py" = ["E402"]  # bootstrap: must add src/ to sys.path before local imports
 "scripts/graph_week8_*.py" = ["E402"]  # bootstrap: must add src/ to sys.path before local imports
 "scripts/service_week9_*.py" = ["E402", "PLW0603"]  # bootstrap + script-level counter
+"scripts/observability_week10_*.py" = ["E402"]  # bootstrap: must add src/ to sys.path before local imports
+"scripts/eval_week10_*.py" = ["E402"]  # bootstrap: must add src/ to sys.path before local imports
 
 [tool.ruff.format]
 quote-style = "double"
