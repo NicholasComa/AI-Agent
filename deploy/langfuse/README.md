@@ -102,8 +102,12 @@ curl -s --noproxy '*' "http://localhost:3000/api/public/health?failIfDatabaseUna
 curl -s --noproxy '*' http://localhost:3030/api/health; echo " exit=$?"
 ```
 
-三个端点全部返回 200 才算栈是完整可用的。`docker compose ps` 里六个服务的
-状态都应带 `(healthy)`。
+三个端点全部返回 200 才算栈是完整可用的。
+
+`docker compose ps` 里六个服务都应为 `Up`，但**只有四个基础容器带 `(healthy)`**
+——`clickhouse`、`minio`、`redis`、`postgres` 定义了健康检查；`langfuse-web` 与
+`langfuse-worker` 没有，显示为 `Up N hours` 属正常，不要据此判定栈有问题。这两个
+应用容器的就绪状态以本节的三个端点为准。
 
 ## 首次登录
 
@@ -167,9 +171,12 @@ curl -s --noproxy '*' -u "$PK:$SK" "http://localhost:3000/api/public/v2/observat
 
 ```bash
 CLP=$(grep -E '^CLICKHOUSE_PASSWORD=' .env | cut -d= -f2-)
-docker compose exec -T clickhouse clickhouse-client -u clickhouse --password "$CLP" \
-  -q "SELECT name, type, level FROM default.events_full ORDER BY name"
+docker compose exec -T clickhouse clickhouse-client -u clickhouse --password "$CLP" -q "SELECT name, type, level FROM default.events_full ORDER BY name"
 ```
+
+命令按单行给出，是为了避开末尾 `\` 续行的一个常见故障：反斜杠后若带上尾随空格（从
+终端或编辑器复制粘贴很容易带上），后续参数会被当成独立命令，报
+`bash: -q: command not found`。
 
 `events_full` 存的是入库前的原始事件，`events_core` 是同一批数据的窄表副本，
 两者行数应当一致。
@@ -182,11 +189,16 @@ docker compose exec -T clickhouse clickhouse-client -u clickhouse --password "$C
 运行环境：Git Bash，在 `deploy/langfuse` 目录下
 
 ```bash
-docker compose exec -T clickhouse clickhouse-client -u clickhouse --password "$CLP" \
-  -q "SELECT count() FROM default.events_full WHERE position(status_message, '不许出现的串') > 0"
-docker compose exec -T clickhouse clickhouse-client -u clickhouse --password "$CLP" \
-  -q "SELECT count() FROM default.events_full WHERE status_message != ''"
+docker compose exec -T clickhouse clickhouse-client -u clickhouse --password "$CLP" -q "SELECT count() FROM default.events_full WHERE position(status_message, '不许出现的串') > 0"
+docker compose exec -T clickhouse clickhouse-client -u clickhouse --password "$CLP" -q "SELECT count() FROM default.events_full WHERE status_message != ''"
 ```
+
+用 `position(...)` 而非 `LIKE`：`LIKE` 在查询串含 `%` 或 `_` 时会当通配符处理，可能把
+无关行也算成命中，而带 `%` 的正文恰恰是最需要排除的情形。
+
+第二条查询是第一条成立的**前提**：它为 0 说明搜索本身无效，第一条的 0 不构成证据。
+这条计数随上报次数增长（每跑一次冒烟多 3 条，来自 `smoke.error`、`broken.tool`、
+`smoke.unfinished`），不要拿某个固定数字当预期上限。
 
 注意 `events_full` 的表结构里本来就没有 input / output 列，正文要泄露也只能
 出现在事件体里，因此判断依据是「搜不到」而不是「列为空」。
