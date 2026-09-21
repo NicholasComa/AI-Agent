@@ -227,10 +227,13 @@ docker compose logs --no-color api > logs/service_week9.log
 ### 6.1 必需与可选依赖
 
 必需：`session_store`、`config`、`qdrant`、`llm`、`workflow`。
-可选：`mcp`（未启用时 `ready=false, required=false`，不影响 `/ready` 判 200）。
+可选：`mcp`（未启用时 `ready=false, required=false`，不影响 `/ready` 判 200）、
+`observability`（追踪后端降级时 `ready=false, required=false`，见 `week10_observability.md`）。
 
 `/ready` 的 `dependencies` 按固定顺序排列：
-`session_store, config, qdrant, llm, mcp, workflow`。
+`observability, session_store, config, qdrant, llm, mcp, workflow`。
+顺序由 `routes/health.py` 的 `_READY_SCAN_ORDER` 决定，与 `lifespan.build_deps`
+的组装顺序一致，因此「依赖链是否完整」可以用一次列表比较断言。
 
 ### 6.2 `/ready` 顺带刷新的两个数字
 
