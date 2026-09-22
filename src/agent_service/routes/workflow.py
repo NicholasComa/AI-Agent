@@ -22,9 +22,11 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Response
 from langgraph.types import Command
 from sse_starlette.sse import EventSourceResponse
+
+from observability import ObservabilityCallbackHandler
 
 from ..deps import AgentServiceDeps, ServiceDeps
 from ..errors import ErrorCode, ServiceError, get_request_id
@@ -41,6 +43,7 @@ from ..schemas import (
     WorkflowStartRequest,
     WorkflowStatus,
 )
+from .rag import TRACE_ID_HEADER
 
 logger = logging.getLogger(__name__)
 
@@ -53,8 +56,24 @@ def _frame(payload: dict[str, Any]) -> dict[str, str]:
     return {"data": json.dumps(payload, ensure_ascii=False)}
 
 
-def _thread_config(thread_id: str) -> dict[str, Any]:
-    return {"configurable": {"thread_id": thread_id}}
+def _thread_config(thread_id: str, handler: Any = None) -> dict[str, Any]:
+    """组装线程配置，可选挂上节点埋点回调。
+
+    ``callbacks`` 必须放在**顶层**而不是 ``configurable`` 里：LangGraph 从
+    ``config["callbacks"]`` 取回调链，放进 ``configurable`` 不会生效，节点也就
+    不会产出 ``chain`` span。
+
+    Args:
+        thread_id: 线程标识。
+        handler: 节点埋点处理器；为 ``None`` 时行为与不加埋点完全一致。
+
+    Returns:
+        传给 ``astream`` / ``aget_state`` 的配置字典。
+    """
+    config: dict[str, Any] = {"configurable": {"thread_id": thread_id}}
+    if handler is not None:
+        config["callbacks"] = [handler]
+    return config
 
 
 def _update_frame(update: dict[str, Any]) -> dict[str, Any] | None:
@@ -146,14 +165,21 @@ async def _drive(
     Returns:
         ``(结果, 更新事件列表)``。
     """
-    config = _thread_config(thread_id)
+    handler = ObservabilityCallbackHandler(deps.tracer, root_name="workflow")
+    config = _thread_config(thread_id, handler)
     updates: list[dict[str, Any]] = []
-    # astream 同时满足两种模式：非流式只是把事件消费掉，流式用它逐节点推帧。
-    async for update in graph.astream(payload, config=config, stream_mode="updates"):
-        updates.append(update)
-        if on_update is not None:
-            await on_update(update)
-    snapshot = await graph.aget_state(config)
+    snapshot: Any = None
+    try:
+        # astream 同时满足两种模式：非流式只是把事件消费掉，流式用它逐节点推帧。
+        async for update in graph.astream(payload, config=config, stream_mode="updates"):
+            updates.append(update)
+            if on_update is not None:
+                await on_update(update)
+        snapshot = await graph.aget_state(config)
+    finally:
+        # 挂起或客户端提前断开时会留下未收尾的节点，统一收尾成 unfinished 后
+        # 投递，避免这些记录永远停在内存里。
+        handler.close()
     result = _result_from_snapshot(
         snapshot,
         thread_id=thread_id,
@@ -259,9 +285,10 @@ def _event_stream(
     thread_id: str,
     session_id: str | None,
     request_id: str | None,
+    trace_id: str | None = None,
 ) -> EventSourceResponse:
-    """构造工作流的 SSE 响应。"""
-    return EventSourceResponse(
+    """构造工作流的 SSE 响应，带上 trace 标识头。"""
+    response = EventSourceResponse(
         workflow_frames(
             deps,
             graph=graph,
@@ -272,6 +299,20 @@ def _event_stream(
             request_id=request_id,
         )
     )
+    if trace_id:
+        response.headers[TRACE_ID_HEADER] = trace_id
+    return response
+
+
+def _with_trace_header(response: Any, trace_id: str) -> Any:
+    """给自建响应对象补 ``X-Trace-Id`` 头。
+
+    只用于已经构造好的响应（幂等回放）：声明式返回模型（``response_model``）的
+    实例不接受未声明字段，写它会抛 ``ValueError``，因此普通返回路径改用注入的
+    :class:`fastapi.Response`。头名与取值口径统一取自 :mod:`routes.rag`。
+    """
+    response.headers[TRACE_ID_HEADER] = trace_id
+    return response
 
 
 @router.post(
@@ -286,6 +327,7 @@ def _event_stream(
 async def start(
     request_body: WorkflowStartRequest,
     request: Request,
+    response: Response,
     deps: ServiceDeps,
 ) -> Any:
     """启动一次需求分析。"""
@@ -299,37 +341,49 @@ async def start(
     )
     payload = {"requirement_text": request_body.requirement_text}
 
-    if request_body.stream:
-        return _event_stream(
-            request=request,
-            deps=deps,
+    with deps.tracer.trace(
+        "workflow.start",
+        request_id=request_id,
+        thread_id=thread_id,
+        session_id=session_id,
+    ) as root:
+        trace_id = root.trace_id
+        if request_body.stream:
+            return _event_stream(
+                request=request,
+                deps=deps,
+                graph=graph,
+                payload=payload,
+                thread_id=thread_id,
+                session_id=session_id,
+                request_id=request_id,
+                trace_id=trace_id,
+            )
+
+        body = request_body.model_dump()
+        replayed = idempotent_replay(deps, request, body)
+        if replayed is not None:
+            return _with_trace_header(replayed, trace_id)
+
+        result = await _run_once(
+            deps,
             graph=graph,
             payload=payload,
             thread_id=thread_id,
             session_id=session_id,
             request_id=request_id,
         )
+        idempotent_remember(
+            deps,
+            request,
+            body,
+            status_code=200,
+            payload=result.model_dump(mode="json"),
+        )
 
-    body = request_body.model_dump()
-    replayed = idempotent_replay(deps, request, body)
-    if replayed is not None:
-        return replayed
-
-    result = await _run_once(
-        deps,
-        graph=graph,
-        payload=payload,
-        thread_id=thread_id,
-        session_id=session_id,
-        request_id=request_id,
-    )
-    idempotent_remember(
-        deps,
-        request,
-        body,
-        status_code=200,
-        payload=result.model_dump(mode="json"),
-    )
+    # 写头放在 trace 体外：既避开「给模型实例设未声明字段」的报错，也避免该
+    # 报错把本该成功的根 span 标成错误。
+    response.headers[TRACE_ID_HEADER] = trace_id
     return result
 
 
@@ -343,6 +397,7 @@ async def resume(
     thread_id: str,
     request_body: WorkflowResumeRequest,
     request: Request,
+    response: Response,
     deps: ServiceDeps,
 ) -> Any:
     """人机确认之后的续跑。"""
@@ -351,10 +406,27 @@ async def resume(
     await _assert_resumable(graph, thread_id)
     payload = Command(resume=list(request_body.answers))
 
-    if request_body.stream:
-        return _event_stream(
-            request=request,
-            deps=deps,
+    with deps.tracer.trace(
+        "workflow.resume",
+        request_id=request_id,
+        thread_id=thread_id,
+        answer_count=len(request_body.answers),
+    ) as root:
+        trace_id = root.trace_id
+        if request_body.stream:
+            return _event_stream(
+                request=request,
+                deps=deps,
+                graph=graph,
+                payload=payload,
+                thread_id=thread_id,
+                session_id=None,
+                request_id=request_id,
+                trace_id=trace_id,
+            )
+
+        result = await _run_once(
+            deps,
             graph=graph,
             payload=payload,
             thread_id=thread_id,
@@ -362,11 +434,5 @@ async def resume(
             request_id=request_id,
         )
 
-    return await _run_once(
-        deps,
-        graph=graph,
-        payload=payload,
-        thread_id=thread_id,
-        session_id=None,
-        request_id=request_id,
-    )
+    response.headers[TRACE_ID_HEADER] = trace_id
+    return result

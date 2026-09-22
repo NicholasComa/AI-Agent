@@ -15,6 +15,8 @@ from typing import Any
 
 from fastapi import APIRouter, Request
 
+from observability import traced_tool
+
 from ..deps import ServiceDeps
 from ..errors import ErrorCode, ServiceError, get_request_id
 from ..guards import request_slot
@@ -67,11 +69,15 @@ async def call_tool(
     """调用一个工具。"""
     session = deps.require("mcp")
     request_id = get_request_id(request)
+    # 埋点包在会话调用外面，记录工具名与参数键；参数值不进 span（可能含路径
+    # 与提交信息正文）。track 只影响记录，异常仍按下面的分层原样上抛。
+    traced = traced_tool(session.call_tool, deps.tracer, tool_name=name)
     try:
         async with request_slot(deps):
-            result = await session.call_tool(name, request_body.arguments)
+            result = await traced(name, request_body.arguments)
     except ServiceError:
         # 闸门或超时产生的错误已经带好错误码，原样上抛。
+        deps.tracer.mark_error("ServiceError", f"tool={name}")
         raise
     except Exception as exc:  # noqa: BLE001 —— 协议层异常统一按依赖不可用上报
         logger.warning("tool call failed name=%s err=%s", name, exc)

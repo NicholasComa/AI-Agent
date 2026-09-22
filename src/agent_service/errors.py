@@ -91,6 +91,10 @@ def error_response(
 ) -> JSONResponse:
     """构造带统一信封的错误响应。
 
+    错误信封自动补上当前 trace 标识（``detail`` 追加 ``trace=<id>``、响应头追加
+    ``X-Trace-Id``）。放在这里而不是各处理器里逐个加：异常处理器有四个，逐个
+    添加必然出现「某个分支漏了」的不一致，而错误场景恰恰是最需要 trace 的时候。
+
     Args:
         status_code: HTTP 状态码。
         code: 机器可读错误码。
@@ -99,6 +103,9 @@ def error_response(
         request_id: 与响应头 ``X-Request-ID`` 同源，便于关联日志。
         headers: 附加响应头，例如限流时的 ``Retry-After``。
     """
+    trace_id = _current_trace_id()
+    if trace_id:
+        detail = f"{detail} trace={trace_id}" if detail else f"trace={trace_id}"
     payload = ErrorResponse(
         error=ErrorBody(
             code=code,
@@ -111,7 +118,28 @@ def error_response(
     response = JSONResponse(status_code=status_code, content=payload.model_dump(mode="json"))
     if headers:
         response.headers.update(headers)
+    if trace_id:
+        response.headers["X-Trace-Id"] = trace_id
     return response
+
+
+def _current_trace_id() -> str | None:
+    """读当前 trace 标识；追踪层不可用时返回 ``None``。
+
+    优先取「最近一次开启过的 trace」（``get_last_trace_id``）而不是「当前」：
+    异常处理器运行在根 span 收尾**之后**，此时当前上下文已被复位，只有前者
+    还能读到标识。若取「当前」，所有错误响应都会丢掉 ``X-Trace-Id``——而错误
+    恰恰是最需要 trace 的场景。
+
+    用 ``try`` 包住导入与调用：错误信封本身必须在追踪层出问题时也能正常构造，
+    否则「记录失败」会连带把错误响应也弄坏。
+    """
+    try:
+        from observability import context
+
+        return context.get_last_trace_id() or context.get_trace_id()
+    except Exception:  # noqa: BLE001 —— 追踪层不可用不影响错误响应
+        return None
 
 
 class ServiceError(Exception):

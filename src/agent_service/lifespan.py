@@ -31,9 +31,14 @@ from graph import ChatFn, build_requirement_workflow, make_fake_chat
 from jwipc_dev_mcp_server.client import connect_stdio
 from llm_client import LlmClient
 from logging_config import configure_logging
-from observability import build_tracer
+from observability import Tracer, build_tracer, traced_chat, traced_retriever
 from rag.embeddings import get_embedding
-from rag.knowledge_rag import JwipcKnowledgeRAG, build_qdrant_config
+from rag.knowledge_rag import (
+    RETRIEVAL_STRATEGIES,
+    JwipcKnowledgeRAG,
+    build_qdrant_config,
+    build_retriever,
+)
 
 from .deps import AgentServiceDeps
 from .security import TokenBucketRateLimiter
@@ -47,6 +52,37 @@ UNKNOWN_VERSION = "0.0.0"
 
 _REQUIRED = True
 _OPTIONAL = False
+
+DEFAULT_RETRIEVAL_STRATEGY = "vector"
+"""缺省检索策略。与第 6 周的既有行为保持一致——不配置就完全不变。"""
+
+QDRANT_RETRIEVAL_STRATEGY_ENV = "QDRANT_RETRIEVAL_STRATEGY"
+"""检索策略环境变量名。"""
+
+QDRANT_COARSE_TOP_K_ENV = "QDRANT_COARSE_TOP_K"
+"""粗排候选数环境变量名，供混合与重排策略使用。"""
+
+QDRANT_TOP_CANDIDATES_ENV = "QDRANT_TOP_CANDIDATES"
+"""重排候选数环境变量名。"""
+
+DEFAULT_COARSE_TOP_K = 20
+DEFAULT_TOP_CANDIDATES = 30
+
+
+def _env_int(name: str, default: int) -> int:
+    """读整型环境变量；缺失或非法时回退缺省值。
+
+    非法值只回退不报错：检索参数配错属于「用默认值也能跑」的情形，没有理由
+    让整个服务起不来。
+    """
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning("qdrant.env_int_invalid name=%s value=%r fallback=%s", name, raw, default)
+        return default
 
 
 def _prepare_runtime() -> None:
@@ -112,11 +148,18 @@ def _brief(exc: BaseException, *, limit: int = 160) -> str:
     return f"{type(exc).__name__}: {(first_line or 'no message')[:limit]}"
 
 
-def _make_chat_fn(client: LlmClient) -> ChatFn:
+def _make_chat_fn(client: LlmClient, tracer: Tracer | None = None) -> ChatFn:
     """把 :class:`LlmClient` 适配成工作流需要的对话函数。
 
     节点在 system 消息上挂了用于路由的 ``task`` 键，适配时只保留
     ``role`` 与 ``content`` 两个标准字段，避免把内部约定发给模型接口。
+
+    Args:
+        client: 模型客户端。
+        tracer: 追踪门面；提供时给对话函数套一层 ``generation`` 埋点。
+
+    Returns:
+        供工作流调用的异步对话函数。
     """
 
     async def _chat(messages: list[dict[str, str]]) -> str:
@@ -124,7 +167,9 @@ def _make_chat_fn(client: LlmClient) -> ChatFn:
         result = await client.chat(plain)
         return result.text
 
-    return _chat
+    if tracer is None:
+        return _chat
+    return traced_chat(_chat, tracer, model=getattr(client, "model", None))
 
 
 def _prepare_session_store(deps: AgentServiceDeps) -> None:
@@ -178,11 +223,34 @@ def _build_knowledge_rag(deps: AgentServiceDeps) -> None:
     """连接 Qdrant 并建立知识库检索器。
 
     构造即建连并确保集合存在，因此这里同时充当 Qdrant 的探活点。
+
+    检索器经 :func:`rag.knowledge_rag.build_retriever` 显式构造后再注入知识库，
+    而不是让知识库用内部默认值自建：这样检索策略（向量 / 混合 / 重排）成为可配
+    置项，同时埋点包装层有了明确的挂载点。默认策略仍是 ``vector``，与既有行为
+    完全一致。
     """
     collection = deps.settings.collection_name
     try:
         embedder = get_embedding()
-        deps.rag = JwipcKnowledgeRAG(embedder, build_qdrant_config(collection, embedder))
+        qdrant_config = build_qdrant_config(collection, embedder)
+        strategy = os.getenv(QDRANT_RETRIEVAL_STRATEGY_ENV, DEFAULT_RETRIEVAL_STRATEGY)
+        if strategy not in RETRIEVAL_STRATEGIES:
+            logger.warning(
+                "qdrant.retrieval_strategy_invalid strategy=%s fallback=%s",
+                strategy,
+                DEFAULT_RETRIEVAL_STRATEGY,
+            )
+            strategy = DEFAULT_RETRIEVAL_STRATEGY
+        retriever = build_retriever(
+            embedder,
+            qdrant_config,
+            strategy=strategy,
+            coarse_top_k=_env_int(QDRANT_COARSE_TOP_K_ENV, DEFAULT_COARSE_TOP_K),
+            top_candidates=_env_int(QDRANT_TOP_CANDIDATES_ENV, DEFAULT_TOP_CANDIDATES),
+        )
+        # 埋点挂在内层检索器上，知识库与生成器都无需感知追踪层的存在。
+        traced = traced_retriever(retriever, deps.tracer)
+        deps.rag = JwipcKnowledgeRAG(embedder, qdrant_config, retriever=traced)
     except Exception as exc:  # noqa: BLE001 —— 库未启动时降级继续启动
         deps.set_dependency(
             "qdrant",
@@ -195,7 +263,9 @@ def _build_knowledge_rag(deps: AgentServiceDeps) -> None:
         "qdrant",
         ready=True,
         required=_REQUIRED,
-        detail=f"collection={collection} mode={os.getenv('QDRANT_MODE', 'local')}",
+        detail=(
+            f"collection={collection} mode={os.getenv('QDRANT_MODE', 'local')} strategy={strategy}"
+        ),
     )
 
 
@@ -229,7 +299,7 @@ def _build_llm(deps: AgentServiceDeps, config: AppConfig | None) -> ChatFn | Non
         )
         return None
     deps.llm = client
-    deps.chat_fn = _make_chat_fn(client)
+    deps.chat_fn = _make_chat_fn(client, deps.tracer)
     deps.add_closer(client.aclose)
     deps.backend = "real"
     deps.set_dependency(

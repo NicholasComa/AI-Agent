@@ -17,9 +17,10 @@ import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Response
 from sse_starlette.sse import EventSourceResponse
 
+from observability import traced_chat, traced_retriever
 from rag.generator import RagAnswer, RagGenerator
 
 from ..deps import ServiceDeps
@@ -36,6 +37,9 @@ from ..schemas import RagQueryRequest
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/rag", tags=["rag"])
+
+TRACE_ID_HEADER = "X-Trace-Id"
+"""响应头里的 trace 标识字段名；与 ``X-Request-ID`` 并列，便于按请求取记录。"""
 
 DELTA_CHUNK_SIZE = 24
 """``delta`` 帧的文本分片长度（字符）。"""
@@ -66,17 +70,22 @@ def build_generator(request_body: RagQueryRequest, deps: ServiceDeps) -> RagGene
 
 
 def _metered_retriever(deps: ServiceDeps, rag: Any, *, min_score: float) -> Any:
-    """包装检索器：记录检索次数与命中率。
+    """包装检索器：记录指标，并产出一条 ``retriever`` span。
+
+    指标与埋点写在**同一层包装器**里而不是各叠一层：两者都只需在调用前后各做
+    一次动作，分两层会多一次属性透传，还会让「指标看到的调用次数」与「span
+    数」存在错位的可能。
 
     命中判定与生成链路的拒答口径一致——召回非空**且** Top1 分数达到
     ``min_score``。只按「召回非空」统计会把低分拒答也算成命中，指标虚高。
 
     Args:
-        deps: 依赖容器，取指标计数器。
+        deps: 依赖容器，取指标计数器与追踪门面。
         rag: 真实检索器，其 ``retrieve`` 签名与
             :meth:`rag.knowledge_rag.JwipcKnowledgeRAG.retrieve` 一致。
         min_score: 本次请求使用的拒答阈值，与生成器保持一致。
     """
+    traced = traced_retriever(rag, deps.tracer, min_score=min_score)
 
     class _MeteredRetriever:
         def __init__(self, inner: Any) -> None:
@@ -92,17 +101,31 @@ def _metered_retriever(deps: ServiceDeps, rag: Any, *, min_score: float) -> Any:
             # 其余属性（如 count / index）原样透传，避免包装层变成窄接口。
             return getattr(self._inner, name)
 
-    return _MeteredRetriever(rag)
+    return _MeteredRetriever(traced)
 
 
 def _metered_chat(deps: ServiceDeps, chat: Any) -> Any:
-    """包装对话函数：按**实际调用次数**累加，重试会各计一次。"""
+    """包装对话函数：按**实际调用次数**累加，重试会各计一次。
+
+    同时套一层 ``generation`` 埋点：模型名取自依赖容器里的客户端，读不到就
+    留空——埋点是旁路，不能因为它拿不到模型名而让对话调用失败。
+    """
+
+    traced = traced_chat(chat, deps.tracer, model=_model_name(deps))
 
     async def _call(messages: list[dict[str, str]]) -> str:
         deps.metrics.record_llm_call()
-        return await chat(messages)
+        return await traced(messages)
 
     return _call
+
+
+def _model_name(deps: ServiceDeps) -> str | None:
+    """尽力取出当前模型名；取不到返回 ``None``。"""
+    try:
+        return getattr(deps.llm, "model", None)
+    except Exception:  # noqa: BLE001 —— 读不到模型名不影响主流程
+        return None
 
 
 async def rag_frames(
@@ -180,37 +203,79 @@ async def rag_frames(
 async def answer(
     request_body: RagQueryRequest,
     request: Request,
+    response: Response,
     deps: ServiceDeps,
 ) -> Any:
     """回答问题；``stream=true`` 时返回事件流。"""
     request_id = get_request_id(request)
-    generator = build_generator(request_body, deps)
 
-    if request_body.stream:
-        probe = make_disconnect_probe(request)
-        return EventSourceResponse(
-            rag_frames(
-                deps,
-                generator=generator,
-                question=request_body.question,
-                probe=probe,
-                request_id=request_id,
+    return await _traced_answer(
+        deps,
+        request=request,
+        response=response,
+        request_body=request_body,
+        request_id=request_id,
+    )
+
+
+async def _traced_answer(
+    deps: ServiceDeps,
+    *,
+    request: Request,
+    response: Response,
+    request_body: RagQueryRequest,
+    request_id: str | None,
+) -> Any:
+    """在请求级 trace 里执行一次问答，并把 trace 标识写进响应头。
+
+    trace 覆盖「组装生成器 → 产出响应」全程，**包括依赖解析**：``require()``
+    在依赖缺失时抛 503，若把它放在 trace 之外，这类失败既不会留下 span，响应
+    也不带 ``X-Trace-Id``，而排障恰恰最需要这两样。
+
+    探针路径不建 trace（见 :data:`agent_service.app.PROBE_PATHS` 的处理），
+    避免健康检查把追踪文件刷满。
+
+    ``X-Trace-Id`` 写进注入的 :class:`fastapi.Response`，且**不放在 trace 体内**：
+    声明式返回模型（``response_model=...``）实例上的属性不会被 FastAPI 读作
+    响应头，而给它设未声明字段会抛 ``ValueError``。这个异常若发生在
+    ``tracer.trace()`` 体内，会把本该成功的根 span 记成错误状态。
+    """
+    with deps.tracer.trace("rag.answer", request_id=request_id, top_k=request_body.top_k) as root:
+        trace_id = root.trace_id
+        generator = build_generator(request_body, deps)
+
+        if request_body.stream:
+            probe = make_disconnect_probe(request)
+            sse = EventSourceResponse(
+                rag_frames(
+                    deps,
+                    generator=generator,
+                    question=request_body.question,
+                    probe=probe,
+                    request_id=request_id,
+                )
             )
+            # SSE 的响应头在构建时就确定；这是自建响应对象，直接写即可。
+            sse.headers[TRACE_ID_HEADER] = trace_id
+            return sse
+
+        body = request_body.model_dump()
+        replayed = idempotent_replay(deps, request, body)
+        if replayed is not None:
+            # 幂等回放直接返回自建的 JSONResponse，同样是写头而不是改模型。
+            replayed.headers[TRACE_ID_HEADER] = trace_id
+            return replayed
+
+        async with request_slot(deps):
+            result = await generator.answer(request_body.question)
+
+        idempotent_remember(
+            deps,
+            request,
+            body,
+            status_code=200,
+            payload=result.model_dump(mode="json"),
         )
 
-    body = request_body.model_dump()
-    replayed = idempotent_replay(deps, request, body)
-    if replayed is not None:
-        return replayed
-
-    async with request_slot(deps):
-        result = await generator.answer(request_body.question)
-
-    idempotent_remember(
-        deps,
-        request,
-        body,
-        status_code=200,
-        payload=result.model_dump(mode="json"),
-    )
+    response.headers[TRACE_ID_HEADER] = trace_id
     return result
