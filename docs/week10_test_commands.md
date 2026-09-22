@@ -1,12 +1,13 @@
 # 第十周 追踪层与 Langfuse 测试命令
 
-本文件覆盖追踪抽象层与 Langfuse 接入：`src/observability/` 本体、两种后端
-（本地 JSONL / 自托管 Langfuse）的验证、以及界面上能看到什么。
+本文件覆盖追踪抽象层与 Langfuse 接入：`src/observability/` 本体、全链路埋点
+（RAG / 工作流 / 工具三类路由）、trace HTML 视图、两种后端（本地 JSONL /
+自托管 Langfuse）的验证、以及界面上能看到什么。
 
 命令按**追踪数据往哪去**分组：
 
 1. 第一节 追踪层单元测试（不需要任何外部设施）
-2. 第二节 本地 JSONL 后端（不联网、不起容器）
+2. 第二节 本地 JSONL 后端（不联网、不起容器），含 trace 视图与响应头核对
 3. 第三节 自托管 Langfuse（六个容器 + 界面与 API 核对）
 4. 第四节 界面与记录名对照（看数据时最容易对不上的地方）
 5. 第五节 对照表与已知问题
@@ -39,6 +40,9 @@ cd /d/workspace/py_ai/week01_ai_basics
 5. **v4 没有 `/api/public/traces` 端点**（返回 404，响应体说明 `events_only` 模式不支持）。
    读观测数据用 `/api/public/v2/observations`。这一点最容易误判成「数据没入库」。
 
+另外两条只影响本文件第二节的 curl 段，单独在那一节开头写明：起服务要带
+`--app agent_service.app:app`，中文请求体要 `printf` 落盘后 `--data-binary`。
+
 ---
 
 ## 一、追踪层单元测试（不需要外部设施）
@@ -50,8 +54,8 @@ cd /d/workspace/py_ai/week01_ai_basics
 uv run pytest tests/observability -q
 ```
 
-预期：`62 passed`。覆盖配置解析、`contextvars` 隔离、四类后端降级路径、JSONL 落盘与
-键名净化。
+预期：`106 passed`。覆盖配置解析、`contextvars` 隔离、四类后端降级路径、JSONL 落盘与
+键名净化，以及埋点包装器与 LangGraph 节点回调。
 
 ### 接线是否改坏既有路由
 
@@ -62,7 +66,7 @@ uv run pytest tests/observability -q
 uv run pytest tests/agent_service -q
 ```
 
-预期：`89 passed`。其中一条逐位断言 `/ready` 的依赖顺序，顺序被误改会在这里直接失败。
+预期：`96 passed`。其中一条逐位断言 `/ready` 的依赖顺序，顺序被误改会在这里直接失败。
 
 ### 全量
 
@@ -71,7 +75,7 @@ uv run pytest tests/agent_service -q
 uv run pytest -q
 ```
 
-预期：`525 passed, 1 skipped`。skip 是符号链接用例，环境限制（当前账户不允许创建
+预期：`576 passed, 1 skipped`。skip 是符号链接用例，环境限制（当前账户不允许创建
 符号链接），与追踪无关。本周起点基线是 `462 passed + 1 skipped`。
 
 ### SDK 可用性
@@ -81,7 +85,8 @@ uv run pytest -q
 uv run python -c "import langfuse; print(langfuse.__version__)"
 ```
 
-预期：`4.15.4`（SDK 版本）。自托管实例是 `4.38.0`（实例版本），两者不需要一致。
+预期：`4.15.4`（SDK 版本，由 `uv.lock` 固定）。自托管实例的版本号另有其值
+（`langfuse/langfuse:4` 是浮动 tag，会随镜像更新变化），两者不需要一致。
 
 ### 门禁
 
@@ -91,7 +96,7 @@ uv run ruff check .
 uv run ruff format --check .
 ```
 
-预期：`All checks passed!` 与 `146 files already formatted`。
+预期：`All checks passed!` 与 `151 files already formatted`。
 
 ### 落盘未污染仓库（隐性缺陷自查）
 
@@ -195,6 +200,118 @@ OBS_BACKEND=local uv run python scripts/observability_week10_smoke.py --verify-w
 `--seed-suffix` 固定种子后缀。缺省取当前时间戳，因此连续两次运行会产生不同的
 `trace_id`；固定它可让多次运行落进同一条 trace 便于对比，也便于复现问题。
 
+### 看单条 trace 的完整结构（HTML 视图）
+
+```bash
+# Git Bash
+uv run python scripts/trace_week10_view.py --list
+```
+
+列出现有 trace，**按开始时间升序，最新的在最后一行**。要挑最近的一条可以直接
+`--list | tail -n 3`，或者用 `--trace-id` 精确指定：
+
+```bash
+# Git Bash —— 缺省自动取「开始时间最晚」的那条，无需先 --list
+uv run python scripts/trace_week10_view.py --out logs/traces/view.html
+```
+
+```bash
+# Git Bash —— 指定 trace 标识；--screenshot 直接出图，路径写仓库相对路径即可
+uv run python scripts/trace_week10_view.py --trace-id 42fabcceff5d4367a4b06893cab9e29b --out logs/traces/view.html --screenshot docs/poho/week10/d47_trace_rag.png
+```
+
+输出的 HTML 左栏是 span 树（按 `parent_id` 缩进，父节点缺失的记为根），右栏是统一
+刻度的时间轴，下方逐条列出该 span 的全部字段。只读取本地 JSONL，不联网。
+
+摘要里三行值得核对：
+
+```text
+span 数    : 3
+类型       : generation, retriever, trace
+根 span 数 : 1
+```
+
+`根 span 数` 大于 1 说明有 span 的父节点没落到同一 trace 里（通常是没接上 trace
+上下文）；类型里缺 `chain` 说明工作流节点埋点没生效。
+
+### 核对全链路四类 span 同时出现
+
+一条 RAG 请求应同时有 `retriever` 与 `generation`：
+
+```bash
+# Git Bash
+uv run python scripts/trace_week10_view.py --list | tail -n 5
+```
+
+一条工作流请求应有 6 条 `chain`（对应 6 个执行节点）+ 1 条 `trace`：
+
+```bash
+# Git Bash —— 把上一步看到的 workflow trace 标识填进来
+uv run python scripts/trace_week10_view.py --trace-id <workflow_trace_id> --out logs/traces/wf.html
+```
+
+`chain` 条数必须等于响应体 `trace` 字段的节点数。若恰好是两倍，说明 LangGraph 的
+pregel 包装层没被折叠掉——每个节点外层还有一层同名包装，回调会看到两层
+`on_chain_start`。
+
+### 验证响应头带 trace 标识
+
+先起服务。**注意 `--app` 必填**：`scripts/serve.py` 缺省加载 `src.main:app`（第五周的
+网关），那个应用没有 `/v1/rag/answer`，会返回 404 让人误判成「埋点没生效」。
+
+```bash
+# Git Bash，在仓库根目录 —— 起服务，保持这个窗口不关
+uv run python scripts/serve.py --port 8000 --app agent_service.app:app
+```
+
+另开一个 Git Bash 窗口发请求。**中文请求体必须先用 `printf` 落盘再 `--data-binary`**，
+内联 `-d '{"question":"中文"}'` 在本机会得到空响应（Git Bash 的编码转换问题）；
+`-D` / `-o` 的路径写 **Windows 绝对路径**，写相对路径会报
+`curl: Failed to open ...`。
+
+```bash
+# Git Bash —— 另开窗口；TP 指向一个已存在的临时目录
+TP="D:/workspace/py_ai/week01_ai_basics/data/week10_curl_tmp"
+mkdir -p "$TP"
+printf '%s' '{"question":"Qdrant 是什么？","top_k":2}' > "$TP/q.json"
+curl -sS --noproxy '*' -m 30 -D "$TP/h.txt" -o "$TP/b.json" -X POST http://127.0.0.1:8000/v1/rag/answer -H 'Content-Type: application/json' --data-binary @"$TP/q.json"
+grep -i 'x-trace-id' "$TP/h.txt"
+```
+
+预期输出一行 `x-trace-id: <32 位十六进制>`。实测（Qdrant 未启动时为 503，属预期）：
+
+```text
+HTTP/1.1 503 Service Unavailable
+x-trace-id: 3c7412c4a7004b53b229a0c20e574fa4
+x-request-id: 20888d8eff8d4947b5df2b86a2507f5b
+```
+
+并核对错误信封的 `detail` 末尾带同一个标识：
+
+```bash
+# Git Bash
+python -m json.tool "$TP/b.json"
+```
+
+```json
+{"error": {"code": "dependency_unavailable",
+           "detail": "... 502 (Bad Gateway) trace=3c7412c4a7004b53b229a0c20e574fa4"}}
+```
+
+四个要点：
+
+1. **成功与失败都要带头**。503 的响应同样应带 `x-trace-id`，且错误信封的
+   `error.detail` 末尾会追加 ` trace=<同一个标识>`。
+2. **探针路径不带**。`/health`、`/ready`、`/metrics-summary` 不建 trace，因此没有
+   该头，这是预期行为而非缺陷。
+3. **路由前的 422 不带**。参数校验失败发生在路由体执行之前，此刻还没有 trace，
+   所以 `X-Trace-Id` 为空、`detail` 里也没有 `trace=`。这是设计如此。
+4. **根 span 不能是 error**。取一条成功请求的 `trace_id` 渲染成 HTML，确认其
+   `status` 为 `ok`。历史上曾把 `X-Trace-Id` 写在声明式返回模型实例上，Pydantic
+   会抛 `ValueError`，该异常穿出 `tracer.trace()` 会把本该成功的根 span 标成错误
+   ——症状是「接口正常但所有 trace 都是失败的」。正确写法是给路由加
+   `response: Response` 参数并在 trace 体外写头。
+
 ---
 
 ## 三、自托管 Langfuse
@@ -269,8 +386,24 @@ curl -s --noproxy '*' "http://localhost:3000/api/public/health?failIfDatabaseUna
 curl -s --noproxy '*' http://localhost:3030/api/health; echo " exit=$?"
 ```
 
-预期第一条输出 `{"status":"OK","version":"4.38.0"}`，三条 `exit=0`。第二条带
-`failIfDatabaseUnavailable=true`，用于确认真连上了数据库而不只是进程活着。
+预期三条都是 `exit=0` 且 HTTP 状态码 `200`：
+
+| 命令 | 预期输出 | 状态码 |
+| --- | --- | --- |
+| 第 1 条 | `{"status":"OK","version":"..."}` | 200 |
+| 第 2 条 | 与第 1 条**完全相同** | 200 |
+| 第 3 条 | `{"status":"ok"}`（小写 `ok`，与上面不同） | 200 |
+
+三点说明：
+
+1. **判据是状态码，不是响应体。** 第 2 条的 `failIfDatabaseUnavailable=true` 只在数据库
+   不可达时改变行为——那时返回 **503**；数据库正常时响应体与第 1 条一字不差。所以"两条
+   输出看起来一样"是正常现象，不代表参数没生效。未知查询参数会被静默忽略（实测
+   `?nonsense=1` 同样返回 200），因此单看响应体区分不出"参数生效"与"参数被忽略"。
+2. 第 3 条的 worker 端点，**200 本身就表示数据库连接成功**，与第 2 条构成两项独立的
+   数据库连通性证据。
+3. 输出里的**版本号不是固定值**：`compose.yaml` 用的是浮动 tag（`langfuse/langfuse:4`），
+   镜像更新后版本号会变，只要 `status` 为 `OK` 即视为通过。
 
 ### 验证密钥
 
@@ -456,12 +589,15 @@ findstr /B "LANGFUSE_INIT_USER_EMAIL LANGFUSE_INIT_USER_PASSWORD" .env
 | 追踪层单测 | `uv run pytest tests/observability -q` | 无 |
 | 全量单测 | `uv run pytest -q` | 无 |
 | 本地后端冒烟 | `OBS_BACKEND=local uv run python scripts/observability_week10_smoke.py --verify-wait 0` | 无 |
+| 列出现有 trace | `uv run python scripts/trace_week10_view.py --list` | 有落盘记录 |
+| 渲染 trace 视图 | `uv run python scripts/trace_week10_view.py --out logs/traces/view.html` | 有落盘记录 |
+| 渲染并截图 | `uv run python scripts/trace_week10_view.py --screenshot docs/poho/week10/d47_trace_rag.png` | Edge |
 | 自托管端到端冒烟 | `uv run python scripts/observability_week10_smoke.py --verify-wait 60` | 六个容器 |
 | 起自托管栈 | `cd deploy/langfuse && docker compose up -d` | Docker Desktop |
 | 停自托管栈 | `cd deploy/langfuse && docker compose stop` | Docker Desktop |
 | 看 ClickHouse 落库 | `cd deploy/langfuse && docker compose exec -T clickhouse clickhouse-client -u clickhouse --password "$CLP" -q "SELECT name, type, level FROM default.events_full ORDER BY name"` | 六个容器 |
 
-### 四个已知问题
+### 五个已知问题
 
 **1. `OBS_BACKEND` 两个取值互斥。** 选 `langfuse` 时不再写本地 JSONL。若实例没在
 运行，追踪记录只会在 SDK 的失败重试里消失，本地不留副本。跑评测前先确认三个健康
@@ -477,6 +613,11 @@ findstr /B "LANGFUSE_INIT_USER_EMAIL LANGFUSE_INIT_USER_PASSWORD" .env
 
 **4. `smoke-ok` 不是 observation 名。** 它是生成 `trace_id` 的 seed，界面上不存在
 该条目。界面里对应的是根 observation `smoke.request`。详见第四节。
+
+**5. 路由前的 422 没有 trace 标识。** 参数校验由 FastAPI 在进入路由体之前完成，
+此时还没建 trace，因此响应头不带 `X-Trace-Id`、信封里也没有 `trace=`。这是设计
+如此，不要当成缺陷。需要给这类请求也留下标识时，只能由客户端自带 `X-Trace-Id`
+请求头并在网关侧记录。
 
 ### 与其它文档的分工
 
