@@ -107,6 +107,85 @@ async def test_answer_uses_generator_default_min_score(harness: Harness) -> None
     assert response.json()["has_answer"] is True
 
 
+async def test_answer_sets_trace_header_on_success(harness: Harness) -> None:
+    """成功响应必须带 ``X-Trace-Id``。
+
+    声明式返回模型（``response_model``）的实例不能被当作响应头载体：给它设
+    未声明字段会抛 ``ValueError``，异常穿出 ``tracer.trace()`` 还会把根 span
+    记成错误。因此头只能写在注入的 ``Response`` 上，这条用例把它钉住。
+    """
+    response = await harness.post("/v1/rag/answer", {"question": QUERY_HIT})
+    assert response.status_code == 200
+    trace_id = response.headers.get("X-Trace-Id")
+    assert trace_id, "成功响应缺少 X-Trace-Id"
+    assert len(trace_id) == 32
+
+
+async def test_answer_successful_trace_is_not_marked_error(harness: Harness) -> None:
+    """成功请求的根 span 不能是 error。
+
+    回归防护：曾因给模型实例写 ``headers`` 抛出 ``ValueError``，使每个正常请求
+    都留下一条 status=error 的根 span，评测算成功率会全错。
+    """
+    await harness.post("/v1/rag/answer", {"question": QUERY_HIT})
+
+    rows = _read_trace_rows(harness.deps.tracer)
+    roots = [row for row in rows if row.get("name") == "rag.answer" and row.get("kind") == "trace"]
+    assert roots, "应当留下一条 rag.answer 的根 span"
+    assert all(row["status"] == "ok" for row in roots)
+    assert all(row.get("error_type") is None for row in roots)
+
+
+async def test_answer_error_carries_trace_id_when_dependency_missing(tmp_path: Path) -> None:
+    """503 也要带 trace 标识，且同时出现在响应头与错误信封里。
+
+    异常处理器运行在根 span 收尾**之后**，此时「当前 trace」上下文已被复位，
+    所以必须读「最近一次 trace」才能拿到标识——否则错误响应会丢掉这个最有用
+    的排障线索。
+    """
+    deps = build_deps(tmp_path, chat=ServiceChat("irrelevant"))
+    deps.rag = None
+    deps.set_dependency("qdrant", ready=False, required=True, detail="not connected")
+    app = create_agent_service_app(deps=deps, version="0.1.0")
+
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client,
+    ):
+        response = await client.post("/v1/rag/answer", json={"question": QUERY_HIT})
+
+    assert response.status_code == 503
+    trace_id = response.headers.get("X-Trace-Id")
+    assert trace_id, "503 响应缺少 X-Trace-Id"
+    assert f"trace={trace_id}" in response.json()["error"]["detail"]
+
+
+async def test_answer_stream_sets_trace_header(harness: Harness) -> None:
+    """流式响应同样带 ``X-Trace-Id``（SSE 是自建响应对象，直接写头）。"""
+    async with harness.client.stream(
+        "POST", "/v1/rag/answer", json={"question": QUERY_HIT, "stream": True}
+    ) as response:
+        assert response.status_code == 200
+        trace_id = response.headers.get("X-Trace-Id")
+    assert trace_id, "流式响应缺少 X-Trace-Id"
+    assert len(trace_id) == 32
+
+
+def _read_trace_rows(tracer: object) -> list[dict[str, object]]:
+    """把该追踪器已落盘的记录读成字典列表。"""
+    import json
+
+    backend = getattr(tracer, "backend", None)
+    directory = getattr(backend, "directory", None)
+    assert directory is not None, "测试后端应暴露落盘目录 directory"
+    rows: list[dict[str, object]] = []
+    for path in sorted(Path(directory).glob("*.jsonl")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                rows.append(json.loads(line))
+    return rows
+
+
 def test_settings_session_dir_default_is_relative() -> None:
     """会话目录默认值必须是相对路径，否则容器里会写到镜像层而非 Volume。"""
     assert not AgentServiceSettings().session_dir.is_absolute()

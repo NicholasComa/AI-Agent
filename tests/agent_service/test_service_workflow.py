@@ -164,3 +164,60 @@ async def test_start_rejects_invalid_payload(harness: Harness) -> None:
         {"requirement_text": NORMAL_REQUIREMENT, "session_id": "x" * 65},
     )
     assert long_session.status_code == 422
+
+
+async def test_start_sets_trace_header(harness: Harness) -> None:
+    """工作流成功响应带 ``X-Trace-Id``。
+
+    头写在注入的 ``Response`` 上而不是返回模型实例：给声明式返回模型设未声明
+    字段会抛 ``ValueError``，且该异常发生在 ``tracer.trace()`` 体内时会把根
+    span 记成错误。
+    """
+    response = await harness.post(_START, {"requirement_text": NORMAL_REQUIREMENT})
+    assert response.status_code == 200
+    trace_id = response.headers.get("X-Trace-Id")
+    assert trace_id, "工作流响应缺少 X-Trace-Id"
+    assert len(trace_id) == 32
+
+
+async def test_resume_sets_trace_header(harness: Harness) -> None:
+    """续跑接口同样带头。"""
+    started = (await harness.post(_START, {"requirement_text": AMBIGUOUS_REQUIREMENT})).json()
+    response = await harness.post(
+        f"{_BASE}/{started['thread_id']}/resume",
+        {"answers": ["面向内部客服团队", "先做创建与流转"]},
+    )
+    assert response.status_code == 200
+    assert response.headers.get("X-Trace-Id")
+
+
+async def test_start_records_one_chain_span_per_executed_node(harness: Harness) -> None:
+    """chain span 数与实际执行节点数一致，且没有把 pregel 包装层也记成节点。
+
+    LangGraph 每个节点外层还有一层同名包装，回调会看到两层 ``on_chain_start``；
+    处理器必须把包装层折叠掉，否则节点数会翻倍（6 个节点会得到 12 条 chain）。
+    """
+    response = await harness.post(_START, {"requirement_text": NORMAL_REQUIREMENT})
+    assert response.status_code == 200
+    executed = response.json()["trace"]
+
+    rows = _read_trace_rows(harness.deps.tracer)
+    chain_names = [row["name"] for row in rows if row.get("kind") == "chain"]
+    assert sorted(chain_names) == sorted(executed)
+    assert len(chain_names) == len(executed) == 6
+
+
+def _read_trace_rows(tracer: object) -> list[dict[str, object]]:
+    """把该追踪器已落盘的记录读成字典列表。"""
+    import json
+    from pathlib import Path
+
+    backend = getattr(tracer, "backend", None)
+    directory = getattr(backend, "directory", None)
+    assert directory is not None, "测试后端应暴露落盘目录 directory"
+    rows: list[dict[str, object]] = []
+    for path in sorted(Path(directory).glob("*.jsonl")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                rows.append(json.loads(line))
+    return rows
