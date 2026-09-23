@@ -26,6 +26,9 @@ logger = logging.getLogger(__name__)
 QUERY_CONTENT_LIMIT = 2000
 """检索查询落盘时的截断长度；只有开启内容捕获才会真正写到这个长度。"""
 
+DENY_KINDS: tuple[str, ...] = ("forbidden", "bad_path", "argument_rejected")
+"""沙箱「拒绝执行」的类别词表；与评测层的同名常量保持同步。"""
+
 
 class TracedChat:
     """包住异步对话函数，每次调用产出一条 ``generation`` span。
@@ -224,8 +227,10 @@ class TracedTool:
                     record=record,
                 )
                 raise
-            record.attributes["denied"] = _is_denied(result)
-            record.attributes["is_error"] = _is_error(result)
+            record.attributes["denied"] = denied = _is_denied(result)
+            # 拒绝优先：被安全策略拦住与执行出错要能各自算率，同一结果被记成
+            # 两个 true，「拒绝率」就会被失败率吃掉。
+            record.attributes["is_error"] = False if denied else _is_error(result)
             return result
 
     def __getattr__(self, name: str) -> Any:
@@ -352,17 +357,36 @@ def _field(result: Any, name: str, default: Any = None) -> Any:
     return getattr(result, name, default)
 
 
+def _tool_payload(result: Any) -> Any:
+    """把被包工具的返回规约到「能直接取字段」的那一层。
+
+    从工具返回结果中，优先提取"结构化内容"，没有就返回原结果。
+    不同调用方的返回形状不同，都必须认：MCP 客户端会话返回带 ``isError`` 的
+    结果对象；进程内 ``FastMCP.call_tool`` 返回 ``(content, structured)`` 二元组；
+    部分实现则把业务字段放在 ``structuredContent`` 里。少了这一步，后面所有字段
+    判定都会静默取不到值 —— 工具被拦住这件事在 trace 上就凭空消失了。
+    """
+    if isinstance(result, tuple | list) and len(result) == 2:
+        content, structured = result
+        return structured if structured is not None else content
+    structured = getattr(result, "structuredContent", None)
+    if structured is not None:
+        return structured
+    return result
+
+
 def _is_error(result: Any) -> bool:
     """判断工具结果是否表示失败。
 
     兼容三种表达方式：``is_error`` / ``isError``（MCP SDK 用驼峰）与
     ``error``。任何一个为真都算失败。
     """
+    payload = _tool_payload(result)
     for name in ("is_error", "isError"):
-        value = _field(result, name)
+        value = _field(payload, name)
         if value is not None:
             return bool(value)
-    return bool(_field(result, "error"))
+    return bool(_field(payload, "error"))
 
 
 def _is_denied(result: Any) -> bool:
@@ -370,13 +394,24 @@ def _is_denied(result: Any) -> bool:
 
     确认门与白名单拒绝在业务上都是「没执行」，但两者在 trace 上必须与真正的
     执行失败分开，否则「拒绝率」与「失败率」会被混成一个数。
+
+    沙箱的拒绝形状是 ``ok=False`` 配一个类别词（如 ``forbidden`` / ``bad_path``），
+    不额外给 ``denied`` 字段，因此这里还要认这套词表。词表与评测层的
+    ``DENY_KINDS`` 同源，但观测层不能反向依赖评测层（``evaluation.rubric``
+    已经依赖观测层），故单列一份，改动时两边要一起改。
     """
+    payload = _tool_payload(result)
     for name in ("denied", "blocked", "rejected"):
-        value = _field(result, name)
+        value = _field(payload, name)
         if value is not None:
             return bool(value)
-    code = _field(result, "error_code") or _field(result, "code")
-    return isinstance(code, str) and "DENIED" in code.upper()
+    code = _field(payload, "error_code") or _field(payload, "code")
+    if isinstance(code, str) and "DENIED" in code.upper():
+        return True
+    if _field(payload, "ok") is False:
+        kind = _field(payload, "kind")
+        return isinstance(kind, str) and kind in DENY_KINDS
+    return False
 
 
 __all__ = [
