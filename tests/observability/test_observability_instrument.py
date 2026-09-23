@@ -324,6 +324,68 @@ async def test_traced_tool_passes_through_attributes(tracer):
     assert traced_tool(call, tracer).session_id == "s-1"  # type: ignore[attr-defined]
 
 
+async def test_traced_tool_unwraps_call_tool_pair(tracer, recorded):
+    """``FastMCP.call_tool`` 的 ``(content, structured)`` 二元组要能取到业务字段。
+
+    不拆这一层，字段判定会全部落空 —— 被拒的工具调用在 trace 上就成了「成功」。
+    """
+
+    structured = {"ok": False, "error": "路径不在白名单内", "kind": "forbidden"}
+    payload = ([{"type": "text", "text": "{}"}], structured)
+
+    async def call(name, arguments):
+        return payload
+
+    result = await traced_tool(call, tracer, tool_name="read_file")("read_file", {})
+
+    assert result is payload, "包装器必须原样返回，不得把二元组换成拆出来的那一半"
+    span = recorded.by_name("tool_read_file")
+    assert span.attributes["denied"] is True
+    assert span.attributes["is_error"] is False
+    assert span.status == "ok", "被策略拦住不是执行出错，span 不该标 error"
+
+
+async def test_traced_tool_reads_structured_content(tracer, recorded):
+    """业务字段放在 ``structuredContent`` 里的结果对象也要认。"""
+
+    class Result:
+        def __init__(self) -> None:
+            self.isError = False
+            self.structuredContent = {"ok": False, "kind": "bad_path"}
+
+    async def call(name, arguments):
+        return Result()
+
+    await traced_tool(call, tracer, tool_name="list_files")("list_files", {})
+
+    assert recorded.by_name("tool_list_files").attributes["denied"] is True
+
+
+@pytest.mark.parametrize(
+    ("kind", "denied", "is_error"),
+    [
+        ("forbidden", True, False),
+        ("bad_path", True, False),
+        ("argument_rejected", True, False),
+        # 确认门与执行失败都不是「拒绝」，否则拒绝率会被别的类别撑高。
+        ("needs_confirmation", False, True),
+        ("internal", False, True),
+        ("not_found", False, True),
+    ],
+)
+async def test_traced_tool_sandbox_kind_vocabulary(tracer, recorded, kind, denied, is_error):
+    """沙箱用 ``ok=False`` 配类别词表达拒绝，词表之外的类别一律不算拒绝。"""
+
+    async def call(name, arguments):
+        return {"ok": False, "error": "说明", "kind": kind}
+
+    await traced_tool(call, tracer, tool_name="read_file")("read_file", {})
+
+    span = recorded.by_name("tool_read_file")
+    assert span.attributes["denied"] is denied
+    assert span.attributes["is_error"] is is_error
+
+
 async def test_wrappers_nest_into_one_parent_chain(tracer, recorded):
     """三个包装器嵌套时形成一条父子链，而不是各自成根。"""
 
