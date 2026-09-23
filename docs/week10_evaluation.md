@@ -230,8 +230,23 @@ uv run python scripts/eval_week10_run.py --tag judged --judge on
 ```bash
 # Git Bash，项目根；--dir 用报告头部给出的 trace 目录
 uv run python scripts/trace_week10_view.py --list --dir logs/eval/traces
-uv run python scripts/trace_week10_view.py --trace-id <trace_id> --dir logs/eval/traces --out logs/eval/view.html
 ```
+
+```bash
+# Git Bash，项目根；不写 --trace-id 即渲染最新一条，也就是上面列表的最后一行
+uv run python scripts/trace_week10_view.py --dir logs/eval/traces --out logs/eval/view.html
+```
+
+要指定某一条时，用变量传 id，不要把占位符原样粘进终端：
+
+```bash
+# Git Bash，项目根；TRACE_ID 换成 --list 第一列里的值
+export TRACE_ID=364525400d1c482093907137d3ce4c91
+uv run python scripts/trace_week10_view.py --trace-id "$TRACE_ID" --dir logs/eval/traces --out logs/eval/view.html
+```
+
+注意：尖括号在 bash 里是重定向符号。写成 `--trace-id <trace_id>` 会被解析为"从名为
+`trace_id` 的文件读取标准输入"，报 `bash: trace_id: No such file or directory`，与脚本无关。
 
 知识问答的 trace 里应同时出现 `retriever` 与 `generation` 两类 span，分别对应
 "有没有召回到期望来源"和"拿到了片段后怎么答"。这两者分开，才能回答本周的关键
@@ -302,10 +317,16 @@ uv run python scripts/trace_week10_view.py --trace-id <trace_id> --dir logs/eval
 uv run python scripts/trace_week10_view.py --trace-id 364525400d1c482093907137d3ce4c91 --dir logs/eval/traces --out logs/eval/view.html
 ```
 
-| 场景 | trace 构成 |
+| 场景 / 路径 | trace 构成 |
 | --- | --- |
 | 知识问答 | 5 个 span：根 + `retriever` × 2 + `generation` × 2 |
-| 需求拆解 | 11 个 span：根 + `chain` × 6 + `generation` × 4 |
+| 需求拆解（走完六个节点） | 12 个 span：根 + `chain` × 6（`classify` / `functional_points` / `rag_retrieve` / `risk` / `test_points` / `report`）+ `generation` × 4 + `retriever` × 1 |
+| 需求拆解（澄清分支） | 4 个 span：根 + `chain` × 2（`classify` / `clarify`）+ `generation` × 1 |
+
+需求拆解两条路径的差异来自状态里的 `needs_clarify`：为真时只跑 `classify → clarify`
+便结束，所以 span 数远少于完整路径。统计前先确认拿到的属于哪一条，否则同一个场景会
+得出两套数。其中的 `retriever` span 是第七章第 5 条那处挂载位置修正之后才出现的——
+修正前的同一份 trace 只有 11 个 span，差别恰好在 `chain rag_retrieve` 下面少了这一层。
 
 知识问答出现 2 次检索与 2 次生成，是因为模型第一次判 `has_answer=false`，生成链路
 按 `top_k × no_answer_retry` 重召后又问了一次；这解释了个别用例 380 秒的耗时，也解释
