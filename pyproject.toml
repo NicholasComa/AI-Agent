@@ -73,6 +73,7 @@ ignore = [
 "scripts/service_week9_*.py" = ["E402", "PLW0603"]  # bootstrap + script-level counter
 "scripts/observability_week10_*.py" = ["E402"]  # bootstrap: must add src/ to sys.path before local imports
 "scripts/eval_week10_*.py" = ["E402"]  # bootstrap: must add src/ to sys.path before local imports
+"tests/evaluation/test_evaluation_compare.py" = ["E402"]  # bootstrap: must add scripts/ to sys.path before importing the CLI
 
 [tool.ruff.format]
 quote-style = "double"
