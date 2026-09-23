@@ -226,8 +226,13 @@ def _build_knowledge_rag(deps: AgentServiceDeps) -> None:
 
     检索器经 :func:`rag.knowledge_rag.build_retriever` 显式构造后再注入知识库，
     而不是让知识库用内部默认值自建：这样检索策略（向量 / 混合 / 重排）成为可配
-    置项，同时埋点包装层有了明确的挂载点。默认策略仍是 ``vector``，与既有行为
-    完全一致。
+    置项。默认策略仍是 ``vector``，与既有行为完全一致。
+
+    这里**不挂追踪埋点**。RAG 层的检索器统一只提供 ``search()``，而追踪层的
+    :class:`~observability.TracedRetriever` 包的是 ``retrieve()``；挂在这一层
+    不会产出任何 span——知识库取的是内层检索器的 ``search``，正好绕过包装。埋点
+    挂在真正的调用点外侧：服务路由见 :mod:`agent_service.routes.rag`，工作流见
+    :func:`_build_workflow`，离线评测见 ``scripts/eval_week10_run.py``。
     """
     collection = deps.settings.collection_name
     try:
@@ -248,9 +253,8 @@ def _build_knowledge_rag(deps: AgentServiceDeps) -> None:
             coarse_top_k=_env_int(QDRANT_COARSE_TOP_K_ENV, DEFAULT_COARSE_TOP_K),
             top_candidates=_env_int(QDRANT_TOP_CANDIDATES_ENV, DEFAULT_TOP_CANDIDATES),
         )
-        # 埋点挂在内层检索器上，知识库与生成器都无需感知追踪层的存在。
-        traced = traced_retriever(retriever, deps.tracer)
-        deps.rag = JwipcKnowledgeRAG(embedder, qdrant_config, retriever=traced)
+        # 埋点不挂在这里（理由见本函数 docstring），直接注入原始检索器。
+        deps.rag = JwipcKnowledgeRAG(embedder, qdrant_config, retriever=retriever)
     except Exception as exc:  # noqa: BLE001 —— 库未启动时降级继续启动
         deps.set_dependency(
             "qdrant",
@@ -362,9 +366,16 @@ def _build_workflow(deps: AgentServiceDeps, chat_fn: ChatFn | None) -> None:
 
     模型接口不可用时回落到确定性对话函数，保证图结构仍可执行、测试仍可
     复现；此时 ``/health`` 的 ``backend`` 为 ``fake``。
+
+    工作流拿到的知识库在这里套一层 ``retriever`` 埋点：服务路由会在
+    :func:`agent_service.routes.rag.build_generator` 里按请求参数包一层，工作流
+    没有那一层，不在这里挂就看不到检索明细。知识库自身不带埋点（原因见
+    :func:`_build_knowledge_rag`）。``deps.rag`` 缺失时保持 ``None``，让图走它
+    既有的「无检索」分支。
     """
     try:
-        deps.graph = build_requirement_workflow(chat_fn=chat_fn or make_fake_chat(), rag=deps.rag)
+        rag = None if deps.rag is None else traced_retriever(deps.rag, deps.tracer)
+        deps.graph = build_requirement_workflow(chat_fn=chat_fn or make_fake_chat(), rag=rag)
     except Exception as exc:  # noqa: BLE001 —— 编译失败仍要让服务起来并报因
         deps.set_dependency(
             "workflow",

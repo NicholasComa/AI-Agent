@@ -221,3 +221,56 @@ def _read_trace_rows(tracer: object) -> list[dict[str, object]]:
             if line.strip():
                 rows.append(json.loads(line))
     return rows
+
+
+# --------------------------------------------------------------------------- #
+# 装配层：工作流的检索埋点挂在哪儿
+# --------------------------------------------------------------------------- #
+
+
+def test_workflow_gets_traced_retriever(tmp_path, monkeypatch) -> None:
+    """工作流拿到的知识库必须自带 ``retriever`` 埋点。
+
+    埋点不能挂在内层检索器上：RAG 层的检索器统一只提供 ``search()``，而
+    ``TracedRetriever`` 包的是 ``retrieve()``，挂上去一条 span 也不会产出。工作流
+    没有服务路由那样的请求级包装层，所以要在装配时自己包一层，否则它的 trace 里
+    只有节点名，看不出这次检索召回了什么。
+    """
+    from service_fakes import build_deps
+
+    import agent_service.lifespan as lifespan
+    from observability import TracedRetriever
+
+    deps = build_deps(tmp_path)
+    captured: dict[str, object] = {}
+    original = lifespan.build_requirement_workflow
+
+    def spy(**kwargs: object) -> object:
+        captured["rag"] = kwargs.get("rag")
+        return original(**kwargs)
+
+    monkeypatch.setattr(lifespan, "build_requirement_workflow", spy)
+    lifespan._build_workflow(deps, chat_fn=None)
+
+    assert isinstance(captured["rag"], TracedRetriever)
+
+
+def test_workflow_rag_stays_none_without_knowledge_base(tmp_path, monkeypatch) -> None:
+    """知识库不可用时传 ``None``，让图走它既有的「无检索」分支。"""
+    from service_fakes import build_deps
+
+    import agent_service.lifespan as lifespan
+
+    deps = build_deps(tmp_path)
+    deps.rag = None
+    captured: dict[str, object] = {}
+    original = lifespan.build_requirement_workflow
+
+    def spy(**kwargs: object) -> object:
+        captured["rag"] = kwargs.get("rag")
+        return original(**kwargs)
+
+    monkeypatch.setattr(lifespan, "build_requirement_workflow", spy)
+    lifespan._build_workflow(deps, chat_fn=None)
+
+    assert captured["rag"] is None
