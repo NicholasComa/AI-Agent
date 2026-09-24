@@ -88,6 +88,13 @@ class EvalReport(BaseModel):
     chat_mode: str
     retrieval_mode: str
     trace_dir: str
+    config: dict[str, Any] = Field(default_factory=dict)
+    """本次执行的可变参数（检索策略、提示词变体、拒答阈值等）。
+
+    对比脚本按这份记录给各列贴标签，也用它判断两组之间到底改了什么——只靠
+    ``tag`` 命名区分，读的人无从确认差异是否真的只来自那一个变量。
+    """
+
     scenarios: list[ScenarioSummary] = Field(default_factory=list)
     cases: list[CaseResult] = Field(default_factory=list)
     rubric: list[Any] = Field(default_factory=list)
@@ -125,6 +132,11 @@ class EvalReport(BaseModel):
             "> 口径说明：同一份数据集在不同 `chat_mode` / `retrieval_mode` 下跑出的数字不可直接比较。",
             "",
         ]
+        if self.config:
+            lines.extend(["| 本次参数 | 值 |", "| --- | --- |"])
+            for key, value in self.config.items():
+                lines.append(f"| {key} | `{value}` |")
+            lines.append("")
         if self.notes:
             lines.append("> " + "；".join(self.notes))
             lines.append("")
@@ -317,6 +329,7 @@ def build_report(
     scenario: str | None = None,
     notes: list[str] | None = None,
     usage: dict[str, float] | None = None,
+    config: dict[str, Any] | None = None,
 ) -> EvalReport:
     """组装报告对象。"""
     totals: dict[str, Any] = {
@@ -339,6 +352,7 @@ def build_report(
         chat_mode=chat_mode,
         retrieval_mode=retrieval_mode,
         trace_dir=trace_dir,
+        config=dict(config or {}),
         scenarios=summarize(cases, scenario=scenario),
         cases=cases,
         totals=totals,

@@ -11,6 +11,11 @@
     # 只跑工具调用场景（不依赖 Qdrant / Ollama，最快）
     uv run python scripts/eval_week10_run.py --scenario tool_call --tag tools
 
+    # 参数对比的三组（同一份冻结数据集，只改一个变量）
+    uv run python scripts/eval_week10_run.py --tag baseline
+    uv run python scripts/eval_week10_run.py --tag retrieval --strategy hybrid
+    uv run python scripts/eval_week10_run.py --tag prompt --prompt grounded --min-score 0.7
+
 产物
 ----
 
@@ -33,6 +38,19 @@
 （``deps.chat_fn``）都是真实链路，因此该场景的数字可以直接采信，代价是每条用例
 要等模型推理（本机 qwen3 约 100 秒/次，触发重召时翻倍）。Qdrant 不可用时该场景
 的用例会记成执行失败并在报告里写明原因，而不是静默跳过。
+
+参数对比的三组
+--------------
+
+三组必须**逐个单变量**跑，且只有一处不同，否则数字变了也归因不了：
+
+- ``baseline``：不加任何开关，即向量检索 + 默认提示词 + 用例自带的 ``min_score``；
+- ``--strategy hybrid``：检索策略改为混合召回；
+- ``--prompt grounded --min-score 0.7``：生成提示词加严，同时抬高拒答阈值。
+
+``--strategy`` 写进 ``QDRANT_RETRIEVAL_STRATEGY``，必须在 ``build_deps()`` **之前**
+生效，检索器只在启动装配那一次构造。三组各自记进报告 JSON 的 ``config`` 字段，
+``scripts/eval_week10_compare.py`` 据此给对比表的各列贴标签。
 
 为什么评测要用自己的 trace 目录
 -------------------------------
@@ -89,6 +107,7 @@ from evaluation.rubric import (  # noqa: E402
     resolve_judge_model,
     resolve_repeats,
 )
+from rag.generator import SYSTEM_PROMPT  # noqa: E402
 
 DEFAULT_DATASET = PROJECT_ROOT / "data" / "golden" / "week10_golden.jsonl"
 DEFAULT_OUT_DIR = PROJECT_ROOT / "logs" / "eval"
@@ -98,6 +117,32 @@ CHAT_MODES = ("fake", "real")
 """工作流对话函数的两种来源。"""
 
 DEFAULT_TOP_K = 3
+
+STRATEGY_ENV = "QDRANT_RETRIEVAL_STRATEGY"
+"""检索策略的配置键，由 ``lifespan._build_knowledge_rag`` 读取。"""
+
+PROMPT_VARIANTS = ("default", "grounded")
+"""生成环节系统提示词的两种变体。"""
+
+GROUNDED_CONSTRAINT: str = """\
+## 加严约束（本组与 baseline 的唯一差异）
+- 答案里的每个事实都必须能在参考资料中找到原文依据；参考资料没写的，一律不答。
+- 禁止用常识补全、禁止跨条目推断、禁止把推测写成结论。需要推断才能得出的结论，按资料不足处理，has_answer 为 false。
+- 只有参考资料直接回答了问题才允许 has_answer 为 true；仅沾边相关的，一律 false。
+- 引用必须逐字摘录，不得改写，也不得拼接互不相邻的片段。
+
+"""
+
+GROUNDED_SYSTEM_PROMPT: str = (
+    SYSTEM_PROMPT.replace("## 严格要求", GROUNDED_CONSTRAINT + "## 严格要求", 1)
+    if "## 严格要求" in SYSTEM_PROMPT
+    else GROUNDED_CONSTRAINT + SYSTEM_PROMPT
+)
+"""在默认提示词里插入一段加严约束。
+
+刻意用插入而不是重写整份提示词：这一组要回答的是「加严约束本身改变了什么」，
+除该段之外的文字必须与 baseline 逐字一致，否则数字变了也说不清是哪处改动的功劳。
+"""
 
 
 def _prepare_tracing(trace_dir: Path) -> None:
@@ -132,13 +177,37 @@ class _CapturingRetriever:
 
 
 class EvalContext:
-    """一次评测运行共享的依赖。"""
+    """一次评测运行共享的依赖。
 
-    def __init__(self, deps: Any, *, chat_mode: str) -> None:
+    除了依赖与工作流，还揣着本次运行的两个可变旋钮（提示词变体、拒答阈值）。
+    它们逐条传给 :class:`RagGenerator`，不写回任何全局状态——同一进程里换一组
+    参数重跑不会互相污染。
+    """
+
+    def __init__(
+        self,
+        deps: Any,
+        *,
+        chat_mode: str,
+        prompt_variant: str = "default",
+        min_score: float | None = None,
+    ) -> None:
         self.deps = deps
         self.chat_mode = chat_mode
+        self.prompt_variant = prompt_variant
+        self.min_score = min_score
         self.graph = _build_graph(deps, chat_mode)
         self._server: Any = None
+
+    def generator_kwargs(self, case: Any) -> dict[str, Any]:
+        """按本次运行的参数拼出生成器的可选实参。"""
+        kwargs: dict[str, Any] = {
+            "top_k": case.input.top_k,
+            "min_score": case.input.min_score if self.min_score is None else self.min_score,
+        }
+        if self.prompt_variant == "grounded":
+            kwargs["system_prompt"] = GROUNDED_SYSTEM_PROMPT
+        return kwargs
 
     async def tool_server(self) -> Any:
         """懒构造 MCP 服务实例（只在本场景用到时才建）。"""
@@ -198,13 +267,9 @@ async def run_knowledge_qa(case: Any, ctx: EvalContext, tracer: Any) -> tuple[Ca
     # 会绕过挂在检索器上的那层埋点；不在这里补一层，用例的 trace 里就没有
     # retriever span，``retrieval_hit`` 一失败便无从判断是「没召回」还是
     # 「召回了没答对」——而后者恰恰是本周要能区分的东西。
-    traced = traced_retriever(capture, tracer, min_score=case.input.min_score)
-    generator = RagGenerator(
-        traced,
-        deps.chat_fn,
-        top_k=case.input.top_k,
-        min_score=case.input.min_score,
-    )
+    kwargs = ctx.generator_kwargs(case)
+    traced = traced_retriever(capture, tracer, min_score=kwargs["min_score"])
+    generator = RagGenerator(traced, deps.chat_fn, **kwargs)
     answer = await generator.answer(case.input.query)
 
     citations = [str(item.source) for item in answer.citations]
@@ -284,12 +349,22 @@ async def run_requirement_analysis(
 
 async def run_tool_call(case: Any, ctx: EvalContext, tracer: Any) -> tuple[CaseResult, str]:
     """直接调 MCP 工具，不经传输层。"""
+    from observability import traced_tool
+
     server = await ctx.tool_server()
     schema_ok = True
     schema_detail = "参数通过工具 schema 校验"
     structured: dict[str, Any] | None = None
+
+    # 不包这一层，工具场景的 trace 里只有一个根 span，「被拒的理由」就只剩报告里的
+    # 一行文字，点开 trace 看不到参数与返回；而「越权调用被拦住、且留下可复查的痕迹」
+    # 恰好是这个场景要展示的东西。
+    async def _call(name: str, arguments: dict[str, Any]) -> Any:
+        return await server.call_tool(name, arguments)
+
+    call = traced_tool(_call, tracer, tool_name=case.input.tool)
     try:
-        _, structured = await server.call_tool(case.input.tool, case.input.arguments)
+        _, structured = await call(case.input.tool, case.input.arguments)
     except Exception as exc:  # noqa: BLE001 —— 参数不合规会在这里抛出
         schema_ok = False
         schema_detail = f"{type(exc).__name__}: {exc}"
@@ -446,11 +521,19 @@ async def _main_async(args: argparse.Namespace) -> int:
     trace_dir = Path(args.trace_dir)
     trace_dir.mkdir(parents=True, exist_ok=True)
     _prepare_tracing(trace_dir)
+    # 检索器只在 build_deps() 里构造一次，策略必须在它之前落进环境；load_dotenv
+    # 不覆盖已存在的键，所以这里先设比 .env 里的值优先。
+    os.environ[STRATEGY_ENV] = args.strategy
 
     from agent_service.lifespan import build_deps
 
     deps = await build_deps()
-    ctx = EvalContext(deps, chat_mode=args.chat)
+    ctx = EvalContext(
+        deps,
+        chat_mode=args.chat,
+        prompt_variant=args.prompt,
+        min_score=args.min_score,
+    )
 
     dataset = Path(args.dataset)
     all_cases = load_cases(dataset)
@@ -462,6 +545,10 @@ async def _main_async(args: argparse.Namespace) -> int:
     print(
         f"数据集 {dataset.name}：共 {len(all_cases)} 条，本次执行 {len(cases)} 条"
         f"（scenario={args.scenario or 'all'} limit={args.limit} chat={args.chat}）"
+    )
+    print(
+        f"参数：strategy={args.strategy} prompt={args.prompt} "
+        f"min_score={args.min_score if args.min_score is not None else '用例自带'}"
     )
 
     results: list[CaseResult] = []
@@ -494,6 +581,14 @@ async def _main_async(args: argparse.Namespace) -> int:
         notes.append(judge_note(rubric[0].model if rubric else None))
 
     usage = _usage_from_traces(trace_dir, {r.trace_id for r in results if r.trace_id})
+    config = {
+        "retrieval_strategy": args.strategy,
+        "prompt_variant": args.prompt,
+        "min_score": "用例自带" if args.min_score is None else args.min_score,
+        "top_k": DEFAULT_TOP_K,
+        "chat_mode": args.chat,
+        "limit": "不限" if args.limit is None else args.limit,
+    }
     report: EvalReport = build_report(
         results,
         tag=args.tag,
@@ -505,6 +600,7 @@ async def _main_async(args: argparse.Namespace) -> int:
         scenario=args.scenario,
         notes=notes,
         usage=usage,
+        config=config,
     )
     report.rubric = rubric
 
@@ -520,8 +616,8 @@ async def _main_async(args: argparse.Namespace) -> int:
     print(f"Markdown : {md_path}")
     print(f"trace    : {trace_dir}")
     print(
-        "查看失败用例：uv run python scripts/trace_week10_view.py "
-        f"--trace-id <trace_id> --dir {_display_path(trace_dir)}"
+        "查看失败用例：先 --list 拿 trace_id，再把它填进 --trace-id："
+        f"uv run python scripts/trace_week10_view.py --list --dir {_display_path(trace_dir)}"
     )
     return 0 if passed == total else 1
 
@@ -535,6 +631,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--tag", default="baseline", help="结果标签，决定输出文件名")
     parser.add_argument("--judge", choices=("on", "off"), default="off", help="是否跑 Rubric")
     parser.add_argument("--chat", choices=CHAT_MODES, default="fake", help="工作流对话函数来源")
+    parser.add_argument(
+        "--strategy",
+        default="vector",
+        help="检索策略，写进 QDRANT_RETRIEVAL_STRATEGY；可选值见 src/rag 的 RETRIEVAL_STRATEGIES",
+    )
+    parser.add_argument(
+        "--prompt",
+        choices=PROMPT_VARIANTS,
+        default="default",
+        help="生成环节系统提示词变体",
+    )
+    parser.add_argument(
+        "--min-score",
+        type=float,
+        default=None,
+        help="拒答阈值；缺省用每条用例自带的值",
+    )
     parser.add_argument("--out-dir", default=str(DEFAULT_OUT_DIR), help="报告输出目录")
     parser.add_argument("--trace-dir", default=str(DEFAULT_TRACE_DIR), help="本次评测的 trace 目录")
     args = parser.parse_args(argv)
