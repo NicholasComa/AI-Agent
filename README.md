@@ -1,89 +1,54 @@
 # AI Agent 应用开发
 
-> **第 1–9 周 · 工程基线 + 模型服务 + 单 Agent + Dify 工作流 + RAG 检索/闭环 + MCP 工具 + LangGraph 状态化工作流 + Agent 服务工程化**
-> 「12 周 AI Agent 应用开发 Roadmap」的落地工程。Week 1–3 建立可复现的工程环境与模型服务、单 Agent；Week 4 用 Dify 可视化工作流复现场景并对照代码版，由 FastAPI 统一包装；Week 5–6 落地 RAG 检索与 RAG 应用闭环（解析 / 切分 / Embedding / Qdrant / Recall@K 评测 / 带引用可拒答的生成链路）；Week 7 把内部能力做成 MCP 标准工具（stdio + Streamable HTTP 双传输，路径/命令白名单 + 确认门三道安全闸）；Week 8 用 LangGraph 把需求分析拆成 6 节点状态图（分类 / 功能点 / 检索 / 风险 / 测试点 / 报告 + 歧义人工确认），具备重试、降级与 Checkpoint 续跑；Week 9 把上述能力收进一个可对外服务的 Agent 服务（认证 / 限流 / 请求体上限、并发闸门与超时、幂等去重、三个探针与进程内指标、Docker Compose 一键起停 + 卷持久化）。
+> **第 1–10 周 · 工程基线 + 模型服务 + 单 Agent + Dify 工作流 + RAG 检索/闭环 + MCP 工具 + LangGraph 状态化工作流 + Agent 服务工程化 + 追踪与评测**
+> 「12 周 AI Agent 应用开发 Roadmap」的落地工程。Week 1–3 建立可复现的工程环境与模型服务、单 Agent；Week 4 用 Dify 可视化工作流复现场景并对照代码版，由 FastAPI 统一包装；Week 5–6 落地 RAG 检索与 RAG 应用闭环（解析 / 切分 / Embedding / Qdrant / Recall@K 评测 / 带引用可拒答的生成链路）；Week 7 把内部能力做成 MCP 标准工具（stdio + Streamable HTTP 双传输，路径/命令白名单 + 确认门三道安全闸）；Week 8 用 LangGraph 把需求分析拆成 6 节点状态图（分类 / 功能点 / 检索 / 风险 / 测试点 / 报告 + 歧义人工确认），具备重试、降级与 Checkpoint 续跑；Week 9 把上述能力收进一个可对外服务的 Agent 服务（认证 / 限流 / 请求体上限、并发闸门与超时、幂等去重、三个探针与进程内指标、Docker Compose 一键起停 + 卷持久化）；Week 10 为整个工程加可观测性（本地 JSONL + 自托管 Langfuse 双后端、三处自动埋点）与离线可跑的评测层（冻结数据集、纯函数指标、三组参数对比报告）。
 
 ---
 
 ## 1. 项目内容
 
-本仓库是「12 周 AI Agent 应用开发 Roadmap」**第 1–9 周**的落地工程。目标是建立可复现的 Python AI 应用环境、统一的代码质量与测试基线，并依次交付模型服务、单 Agent、Dify 工作流对照、RAG 检索/闭环、MCP 工具、LangGraph 状态化工作流，最终把全部能力收进一个可对外提供服务的 Agent 服务。
+本仓库是「12 周 AI Agent 应用开发 Roadmap」**第 1–10 周**的落地工程。目标是建立可复现的 Python AI 应用环境、统一的代码质量与测试基线，并依次交付模型服务、单 Agent、Dify 工作流对照、RAG 检索/闭环、MCP 工具、LangGraph 状态化工作流、Agent 服务工程化，最后为整个工程补上可观测性（追踪）与离线评测层。
 
-**Week 1 · 工程基线（Day 1–5，打地基）**
+**Week 1 · 工程基线（Day 1–5）**
+- 用 `uv` + `pyproject.toml` + `uv.lock` 搭建 Python 3.12 统一环境与 Ruff / pytest 质量基线。
+- `src/config.py`（pydantic-settings 强类型配置）、`src/llm_client.py`（httpx 异步调用 + 错误信封）、`src/schemas.py` / `src/prompts.py`（JSON Mode 结构化输出）。
 
-- **Day 1 · 工程基线**：用 `uv` + `pyproject.toml` + `uv.lock` 搭建 Python 3.12 统一开发环境，引入 Ruff（lint + format）与 pytest 质量基线。
-- **Day 2 · 配置与 JSON**：`src/config.py` 强类型配置加载（API key / base url / model name，来源 `.env` 或 `config.json`），Pydantic 校验。
-- **Day 3 · 模型客户端**：`src/llm_client.py`，基于 `httpx` 异步调用 OpenAI 兼容的 chat-completions 接口，封装 `LlmAuthError` / `LlmTimeoutError` / `LlmServerError` 等错误信封。
-- **Day 4 · 结构化输出**：`src/schemas.py`（`RequirementAnalysis` 等输出模型）与 `src/prompts.py`（系统提示 + 消息构造），JSON Mode 做结构化需求分析。
-- **Day 5 · FastAPI 服务**：`src/app.py`（应用工厂 + `/health` `/chat` `/analyze-requirement` 端点 + 统一异常处理）与 `src/main.py`。
+**Week 2 · 模型服务（Day 6–10）**
+- 升级为稳定服务：`ModelClient` 抽象 + 工厂、`RequestId` + 访问日志中间件、JSON 结构化日志（request_id 链路）。
+- 新增 `GET /models`、`POST /chat/stream`（SSE）、`asyncio.Semaphore` 并发限制；统一 `ErrorBody`（含 request_id）。交付 5 个端点、106 条测试。
 
-**Week 2 · 模型服务（Day 6–10，升级为稳定服务）**
+**Week 3 · 单 Agent（Day 11–15）**
+- LangChain v1 `create_agent` 实现 `DevAssistantAgent`（`src/devagent/`）：3 工具（安全算术 / 沙箱读文件 / commit 校验）+ 2 中间件（追踪 + 异常兜底）+ `recursion_limit` 截断。
+- 82 条测试（Agent Loop + 工具 + 中间件 + 20 条端到端），全量 **188 passed**。
 
-将 Week 1 的最小服务升级为**稳定、可配置、可测试**的 FastAPI 模型服务：配置改用 `pydantic-settings` 从 `.env` 读取；新增 `ModelClient` Protocol 抽象与工厂；加入 `RequestId` + 访问日志中间件与 JSON 结构化日志（`request_id` 链路追踪）；新增 `GET /models` 与 `POST /chat/stream`（SSE 流式）；`asyncio.Semaphore` 并发限制；所有异常经统一映射为 `ErrorBody`（含 `request_id`）。最终交付 5 个端点、106 条测试全部通过。
-
-**Week 3 · 单 Agent 与 Tool Calling（Day 11–15，引入 LangChain v1）**
-
-基于 LangChain v1 的 `create_agent` 实现 `DevAssistantAgent`：提供 `calculator`（安全算术）、`read_text_file`（沙箱防穿越）、`check_commit_message`（commit 规范校验）三个工具；用 `AgentMiddleware` 实现 `TraceMiddleware`（三钩子记录 Agent Loop 关键节点）与 `SafeToolMiddleware`（工具异常兜底转 `TOOL_ERROR:`）；`DEFAULT_RECURSION_LIMIT=8` 防无限循环。新增 82 条测试（Agent Loop + 工具 + 中间件 + 20 条端到端用例覆盖 4 类场景），全量 188 passed。Agent 目前仅被 pytest 驱动，未接真实模型与交互界面。
-
-**Week 4 · Dify 工作流与代码版对照（Day 16–20）**
-
-用 Dify 可视化工作流理解节点 / 变量 / 分支 / 知识检索，并与代码版 Agent 对照：
-
-- **Day 17 · DevAssistantAgent_Dify**：在 Dify 复现 Week 3 场景为四分支工作流（calculator / check_commit / knowledge_retrieval / chat），导出 `dify_workflows/DevAssistantAgent_Dify.yml`。
-- **Day 18 · RequirementAnalysis_Dify**：搭建「需求文本 → 参数提取 → 分类 → 风险分析 → 结构化输出」工作流，导出 `dify_workflows/RequirementAnalysis_Dify.yml`。
-- **Day 19 · POST /dify/run**：新增 `src/dify_client.py`（`DifyWorkflowClient` 异步客户端）与 `src/api_models.py` 的 `DifyRunRequest/Response`；`src/app.py` 增加通用透传端点 `POST /dify/run`，靠 `.env` 的 `DIFY_API_KEY` 决定调用哪个工作流。
-- **Day 20 · 对比报告**：`docs/day20_dify_vs_code_report.md` 对比 Dify 版与代码版在调试、版本管理、扩展、部署上的差异。
-- 新增 6 条 Dify 相关测试（客户端 + 路由），全量 **194 passed**；本机四分支 API 联调全通过。
+**Week 4 · Dify 工作流对照（Day 16–20）**
+- 两个 Dify 工作流 DSL（`dify_workflows/`）+ `POST /dify/run` 通用透传端点 + `DifyWorkflowClient`；Dify 版 vs 代码版对照报告。
+- 6 条 Dify 测试，全量 **194 passed**。
 
 **Week 5 · RAG 检索基础（Day 21–25）**
-
-落地最小可用的 RAG 检索（不含生成），打通「文档解析 → 切分 → Embedding → Qdrant → TopK 检索」并做 Recall@K 评测：
-
-- `src/rag/ingestion.py`：加载 `.md/.txt`、按 `chunk_size/overlap` 切分、保留 `source` 元数据。
-- `src/rag/embeddings.py`：`EmbeddingClient` / `FakeEmbedding` / `get_embedding` 工厂（真实用 `mxbai-embed-large`，离线用假向量）。
-- `src/rag/retriever.py`：`ListRetriever`（离线兜底）+ `QdrantRetriever`（主链路，返回 `chunk_id/source/score/text`，不调 LLM）。
-- `src/rag/qdrant_store.py`：`QdrantConfig` + connect / ensure_collection / upsert / search。
-- `src/rag/evaluate.py`：`load_dataset` / `evaluate` Recall@K / `diagnose_miss`（五类未命中归因）/ `write_report`。
-- 评测：`examples/retrieval_set.json`（20 条人工标注）+ `scripts/rag_week5_eval.py`，真实环境 Recall@1=0.778 / @3=0.833 / @5=0.889。
-- 新增 RAG 相关测试（`test_rag_*`、`test_qdrant_store`、`test_embedding_client`、`test_dify_*` 之外的 rag 系列），全量 **259 passed**。
+- `src/rag/`：解析切分、Embedding（mxbai-embed-large，离线 FakeEmbedding 兜底）、检索（ListRetriever + QdrantRetriever）、Qdrant 存储、Recall@K 评测（五类未命中归因）。
+- 20 条人工标注集，真实 Recall@1=0.778 / @3=0.833 / @5=0.889；全量 **259 passed**。
 
 **Week 6 · RAG 应用闭环（Day 26–30）**
+- `JwipcKnowledgeRAG`（多格式导入）、`RagGenerator`（引用校验 + 双保险拒答）、`POST /rag/query`；30 条问答回归集、chunk_size×TopK 参数网格。
+- 检索增强（Metadata Filter / BM25+RRF / 轻量精排，默认关闭）融合进 `src/rag/`；混合检索 Recall@1 0.722→0.833；全量 **319 passed**。
 
-在 W5 检索底座上补齐「多格式知识库导入 → 检索增强生成（带引用/可拒答）→ RAG HTTP API → 30 条问答回归集 → chunk_size×TopK 参数网格评估」：`JwipcKnowledgeRAG`（PDF/MD/TXT 导入）、`RagGenerator`（双保险拒答 + 引用校验）、`src/rag_api.py`（`POST /rag/query`）；检索增强（Metadata Filter / 混合检索 BM25+RRF / 轻量精排）融合进 `src/rag/`（可选、默认关闭），真实链路混合检索 Recall@1 0.722→0.833。详见 `docs/week06_summary.md` 与 `docs/param_compare.md`。
-
-**Week 7 · MCP：把内部能力做成标准工具（Day 31–35）**
-
-理解 Host / Client / Server 与 JSON-RPC 2.0，开发安全、可描述、可复用的 MCP Tool（SDK 锁 `mcp==1.29.1`，规范 `2025-11-25`，不实现旧 HTTP+SSE）：
-
-- `src/jwipc_dev_mcp_server/`：`server.py`（FastMCP 装配 + `ping`）、`config.py`（沙箱与上限，`JWIPC_MCP_*` 环境变量）、`security.py`（三道闸）、`schemas.py`（出参模型，全 `extra="forbid"` + 统一 ok/error/kind 信封）、`tools.py`（4 工具 + `ToolAnnotations` 只读声明）、`client.py`（双传输客户端封装，stdio 与 Streamable HTTP）。
-- **4 个工具**：`list_files` / `read_file`（超 50KB 需确认、二进制拒绝）/ `git_log`（服务端固定拼装 argv + 白名单校验 + 15s 超时）/ `check_commit_message`（复用 Week 3 校验器）。
-- **三道安全闸**：`SandboxRoot` 路径白名单（拒 `..` 穿越/绝对路径/盘符/空字节/符号链接逃逸）、`GitCommandPolicy` 命令白名单（只读子命令 + 参数 allowlist）、`ConfirmationGate` 确认门（大文件二次确认）。
-- **双传输实测**：stdio（子进程 + 管道）与 Streamable HTTP（`http://127.0.0.1:8765/mcp`）全链路打通；stdio 下 stdout 专用于协议、日志走 stderr。
-- **业务串联**：`scripts/mcp_week7_review.py`「审查一次提交改动」——客户端编排 `git_log → check_commit_message → list_files → read_file`，输出结构化审查结论；`--demo-errors` 演示 3 异常场景（`forbidden` / `needs_confirmation` / `argument_rejected`）。
-- 新增 28 条 MCP 测试（15 工具 + 10 安全 + 3 双传输），全量 **350 passed, 1 skipped**；文档：`docs/week07_tools.md` / `docs/week07_security_report.md` / `docs/week07_summary.md`。
+**Week 7 · MCP 工具（Day 31–35）**
+- `src/jwipc_dev_mcp_server/`（6 模块）+ 4 工具（list_files / read_file / git_log / check_commit_message）+ 双传输客户端（stdio / Streamable HTTP）。
+- 三道安全闸（路径白名单 / 命令白名单 / 确认门）；`mcp_week7_review.py` 业务流水线；28 条测试，全量 **350 passed, 1 skipped**。
 
 **Week 8 · LangGraph 状态化工作流（09-07 ~ 09-11）**
+- `src/graph/`：6 业务节点（分类 / 功能点 / 检索 / 风险 / 测试点 / 报告）+ 澄清中断节点；重试降级不中断整图、Checkpoint 续跑、人工确认闭环。
+- 4 个演示脚本；24 条图测试，全量 **374 passed, 1 skipped**。
 
-把复杂任务从一个 Prompt 拆成可观察、可重试、可恢复的状态图，新增 `src/graph/` 包：
+**Week 9 · Agent 服务工程化（09-14 ~ 09-18）**
+- `src/agent_service/`（15 模块）：把 RAG / 工作流 / MCP 工具收进可对外服务；5 业务端点 + 3 探针、认证 / 限流 / 请求体上限、并发闸门与超时分级错误码、幂等去重、进程内指标、Docker Compose 一键起停 + 卷持久化。
+- 5 个脚本 + 3 份文档 + 88 条服务测试；全量 **462 passed, 1 skipped**。
 
-- **状态 Schema**：`WorkflowState`（`TypedDict`，`total=False`）——15 个字段，节点只回写自己负责的局部 patch，并把节点名追加进 `trace`，执行路径直接从状态读出。
-- **6 业务节点 + 1 澄清节点**：`classify` → `functional_points` → `rag_retrieve` → `risk` → `test_points` → `report`；歧义时经条件边进 `clarify`，由 `interrupt()` 挂起，人工补充后用 `Command(resume=...)` 从挂起点续跑。
-- **重试与降级**：LLM 节点统一走 `_call_chat_with_retry`（重试 `max_retries` 次），耗尽则写 `errors`（node / type / message / attempts）并降级产出，**图继续跑到 report**。未直接挂 langgraph 内置 `RetryPolicy`——它只对网络类错误重试，且耗尽后抛异常使整图崩溃。
-- **Checkpoint**：默认 `InMemorySaver`，按 `thread_id` 隔离；跨进程持久化需额外装 `langgraph-checkpoint-sqlite`。
-- **业务串联**：`scripts/graph_week8_demo.py` 覆盖 1 正常 + 3 异常（歧义暂停 / 依赖降级 / 节点失败），`--real` 接真实 Ollama + Qdrant，不可用时自动回退 Fake。
-- 新增 24 条图相关测试（3 冒烟 + 16 流程 + 5 韧性），全量 **374 passed, 1 skipped**；文档：`docs/week08_architecture.md` / `docs/week08_state_fields.md` / `docs/week08_summary.md`。
-
-**最终实现**
-
-- Week 1–2：一个 FastAPI 服务，暴露 5 个端点（健康检查、对话转发、流式对话、模型清单、结构化需求分析）；统一的错误信封（`ErrorBody`）；完整的 `request_id` 链路。
-- Week 3：`DevAssistantAgent`（`src/devagent/`）—— 单 Agent + 3 工具 + 2 中间件（追踪 + 兜底）+ 82 条测试；Agent Loop 四个终止条件（直接 final / 调工具→结果→final / 异常兜底 / recursion_limit 截断）。
-- Week 4：Dify 双工作流 DSL（`dify_workflows/`）+ `POST /dify/run` 通用透传端点 + `DifyWorkflowClient`；Dify 版与代码版对照报告。
-- Week 5：`src/rag/`（ingestion / embeddings / retriever / qdrant_store / evaluate / probes）+ 离线可跑的 RAG 评测框架，Recall@K 达标、五类未命中归因闭环。
-- Week 6：RAG 应用闭环——多格式导入、带引用可拒答的生成链路、`POST /rag/query`、30 条问答回归集、参数网格评估；检索增强融合进 `src/rag/`（可选）。
-- Week 7：`src/jwipc_dev_mcp_server/`（6 模块 MCP 包）+ 双传输客户端 + 业务流水线脚本 + 28 条 MCP 测试；三道安全闸（路径白名单 / 命令白名单 / 确认门）。
-- Week 8：`src/graph/`（6 模块 LangGraph 包）+ 6 业务节点与 1 个澄清中断节点 + 4 个演示脚本 + 24 条图相关测试；重试降级、Checkpoint 续跑、人工确认闭环。
-- Week 9：`src/agent_service/`（15 模块服务包）——把 RAG / 工作流 / MCP 工具统一收进可对外服务的 HTTP 服务：5 个业务端点 + 3 个探针、认证/限流/请求体上限、并发闸门与超时、幂等去重、进程内指标、Docker Compose 一键起停与卷持久化；5 个脚本 + 三份文档。
-- 完整的测试验证：截至 Week 9，`ruff` 通过、`pytest` **462 passed, 1 skipped**（skip 为 Windows 符号链接权限限制）。
+**Week 10 · 追踪与评测（09-19 ~ 09-23）**
+- 可观测性层（`src/observability/`）：本地 JSONL + 自托管 Langfuse 双后端、三处自动降级、仅元数据上报；`traced_chat` / `traced_retriever` / `traced_tool` 三包装器、`trace_week10_view.py` 自包含 HTML 视图。
+- 评测层（`src/evaluation/`）：冻结数据集、纯函数指标（阈值 / 跳过语义 / 分位数）、三组参数对比脚本（`eval_week10_run.py` / `compare.py`）与数字块可替换报告。
+- 追踪 114 条 + 评测 145 条，全量约 **721 passed, 1 skipped**。
 
 ---
 
@@ -145,7 +110,7 @@ week01_ai_basics/
 │   │   ├── schemas.py       # 出参模型（ToolResult 信封 + tool_failure 统一错误）
 │   │   ├── tools.py         # list_files / read_file / git_log / check_commit_message
 │   │   └── client.py        # 双传输客户端封装（connect_stdio / connect_http）
-│   └── graph/               # Week 8 LangGraph 状态化工作流
+│   ├── graph/               # Week 8 LangGraph 状态化工作流
 │       ├── __init__.py      # 导出 build_requirement_workflow / build_quickstart_graph / WorkflowConfig
 │       ├── state.py         # WorkflowState（TypedDict，total=False，15 字段）
 │       ├── config.py        # WorkflowConfig（JWIPC_GRAPH_* 环境变量）
@@ -153,6 +118,8 @@ week01_ai_basics/
 │       ├── nodes.py         # 6 业务节点 + clarify 中断节点 + 重试降级 + 条件路由
 │       ├── workflow.py      # build_requirement_workflow 组装（固定边 + 条件边 + checkpointer）
 │       └── quickstart.py    # 最小示例图（条件边 + interrupt + Checkpoint 续跑）
+│   ├── observability/        # Week 10 可观测性层（双后端 + 三包装器 + 配置/模型/视图脚本）
+│   └── evaluation/           # Week 10 评测层（数据集 / 指标 / 报告 / 对比）
 ├── data/
 │   └── mcp_sandbox/         # Week 7 沙箱夹具（.gitignore 忽略，不入库）
 ├── src/agent_service/      # Week 9 Agent 服务包（导入根 src/，共 15 模块）
@@ -169,7 +136,7 @@ week01_ai_basics/
 │   ├── metrics.py           # 进程内指标计数器 + 采集中间件（零新依赖）
 │   ├── middleware.py        # RequestId / AccessLog / 请求体上限（纯 ASGI，兼容 SSE）
 │   └── routes/              # health（3 探针）/ rag / workflow / tools
-├── tests/                   # pytest 测试（36 个文件，462 用例 + 1 skip）
+├── tests/                   # pytest 测试（约 721 用例 + 1 skip）
 │   ├── conftest.py                 # 全局 fixture（预留）
 │   ├── fake_models.py              # Week 3 测试假模型（FakeToolCapableChatModel）
 │   ├── test_config.py              # AppConfig 配置加载 / 字段校验 / env 隔离
@@ -561,7 +528,7 @@ curl -s -X POST http://127.0.0.1:8000/analyze-requirement \
 ## 7. 测试与质量
 
 ```bash
-# 全部测试（截至 Week 9 共 462 passed + 1 skipped）
+# 全部测试（截至 Week 10 共约 721 passed + 1 skipped）
 uv run pytest -q
 
 # 按模块运行（部分示例）
@@ -715,6 +682,8 @@ docker compose down && docker start qdrant_server                # 收尾还原
 | `agent_service/test_service_guards.py` | Week 9 会话与闸门 | 会话落盘与读取、幂等键命中/未命中/键相同内容不同、并发闸门排队超时 429、总时限 504 |
 | `agent_service/test_service_security.py` | Week 9 安全加固 | 未认证 401（且不消耗配额）、配额耗尽 429 + `Retry-After`、请求体超限 413、探针在认证开启时豁免（判据为白名单：`/ready` 的 503 属合法应答，500/502/404 判失败） |
 | `agent_service/test_service_metrics.py` | Week 9 指标与探针明细 | 路由键归一化（`/v1/tools/<name>/call` 折叠）、直方图 p95 取桶上界且溢出桶不丢样本、并发计数不为负、摘要字段齐全、探针不计入请求量、命中率把低分拒答算未命中且不调模型、`errors_by_code` 归类、幂等命中计数、`/ready` 带 `points_count` 与 `tools=N` 且反复调用不增长明细、容器未注册时中间件不影响请求 |
+| `observability/*`（114 条） | Week 10 追踪层 | 配置解析与非法值静默回退、后端降级链逐级判据、JSONL 逐行落盘与坏行容忍、Langfuse 后端的类型映射与栈深上限、`traced_chat` / `traced_retriever` / `traced_tool` 三包装器（含工具返回形状规约与拒绝词表）、回调处理器把节点事件翻成 `chain` / `generation` span |
+| `evaluation/*`（148 条） | Week 10 评测层 | 数据集配额与冻结校验、指标纯函数（阈值、跳过语义、分位数取桶上界）、报告渲染与轨迹提示命令、对比脚本的翻转判定（含检查项级退化）、分场景延迟与生成块替换 |
 
 **测试架构要点**
 
@@ -723,6 +692,81 @@ docker compose down && docker start qdrant_server                # 收尾还原
 - `pytest-asyncio` 设为 `asyncio_mode="auto"`，异步用例无需显式标记。
 - `pythonpath=["src"]` 已配置，测试内 `from app import create_app` 等扁平的 import 可直接解析。
 - Week 3 Agent 测试用 `FakeToolCapableChatModel`（`tests/fake_models.py`）假模型按预设序列返回 `AIMessage`（含 `tool_calls`），不依赖真实 LLM；工具失败场景用测试内 `@tool` 自定义 `boom_*` 函数 + `create_agent(middleware=[SafeToolMiddleware()])` 直构造验证兜底。
+
+### 7.2 第十周：追踪与评测
+
+#### 怎么看 trace
+
+追踪层默认把 span 落到本地 JSONL，渲染脚本把它变成自包含 HTML（样式内联、无外部请求），
+需要时用本机 Edge 的无头模式截图，不额外安装浏览器自动化工具。
+
+```bash
+# Git Bash，项目根
+cd /d/workspace/py_ai/week01_ai_basics
+export PATH="/c/Users/Xsz/.local/bin:$PATH"
+uv run python scripts/trace_week10_view.py --list --dir logs/traces
+uv run python scripts/trace_week10_view.py --dir logs/traces --out logs/traces/view.html
+```
+
+服务的 trace 落在 `logs/traces/`，评测跑出来的在 `logs/eval/traces/`，`--dir` 要与
+报告里 `trace_id` 的出处一致，否则会报找不到该 trace。
+
+```bash
+# Git Bash，项目根；指定某一条并截图（示例 id 取自评测的 trace 目录）
+export TRACE_ID=364525400d1c482093907137d3ce4c91
+uv run python scripts/trace_week10_view.py --trace-id "$TRACE_ID" --dir logs/eval/traces --out logs/eval/view.html --screenshot docs/poho/week10/d48_trace_rag.png
+```
+
+不写 `--trace-id` 时渲染最新一条。尖括号在 bash 里是重定向符号，命令里不要写
+`--trace-id <trace_id>`，那会被解析成从名为 `trace_id` 的文件读取标准输入。
+
+本地 JSONL 与 Langfuse 是**互斥**的两条路径：一个进程只启用一个后端，`OBS_BACKEND`
+选中谁就只有谁有数据。想看自托管实例的 UI（含 Session 视图）时：
+
+```bash
+# Git Bash，在 deploy/langfuse 目录下；六个容器起来后浏览器开 http://localhost:3000
+docker compose up -d
+```
+
+#### 怎么跑评测
+
+评测数据集的构建、指标口径与执行方式见 `docs/week10_evaluation.md`；下面的命令是最短路径。
+
+```bash
+# Git Bash，项目根；数据集自检，非零退出即不达标
+uv run python scripts/eval_week10_build.py --check
+```
+
+```bash
+# Git Bash，项目根；小样本跑通，每场景 5 条，本机约 16 分钟
+uv run python scripts/eval_week10_run.py --limit 5 --tag dryrun
+```
+
+```bash
+# Git Bash，项目根；三组参数对比逐组单跑，全量一轮约 47 分钟（几乎全在知识问答的推理上），建议放后台
+uv run python scripts/eval_week10_run.py --tag baseline
+uv run python scripts/eval_week10_run.py --tag retrieval --strategy hybrid
+uv run python scripts/eval_week10_run.py --tag prompt --prompt grounded --min-score 0.7
+```
+
+```bash
+# Git Bash，项目根；把三组并排成对比表并逐条列出变差用例
+uv run python scripts/eval_week10_compare.py --baseline logs/eval/week10_eval_baseline.json --variant logs/eval/week10_eval_retrieval.json logs/eval/week10_eval_prompt.json --out docs/week10_eval_report.md
+```
+
+对比脚本的 `--out` 指向带生成标记的文档时只替换标记之间的数字块，手写叙述原样保留；
+指向新文件时整份生成。报告与 trace 都在 `logs/` 下，该目录整体被 `.gitignore` 排除。
+
+#### 文档索引
+
+| 文档 | 内容 |
+| --- | --- |
+| `docs/week10_observability.md` | 追踪层的后端与降级链、span 字段表、配置键全表、埋点落点表、视图脚本用法、三种接入方式与前置条件 |
+| `docs/week10_test_commands.md` | 追踪与埋点的逐条命令、预期输出与排障 |
+| `docs/week10_evaluation.md` | 数据集构成与冻结口径、指标定义、评测执行方式、实跑结果与已知问题 |
+| `docs/week10_eval_report.md` | 三组参数对比的数字、变差用例清单、Rubric 一致率与局限声明、成本口径 |
+| `docs/week10_summary.md` | 本周总结（目标、结构、模块、提交、测试、失败案例、未解决项、下周计划） |
+| `deploy/langfuse/README.md` | 自托管 Langfuse 的部署、起停、密钥与排障 |
 
 ---
 
@@ -739,3 +783,4 @@ docker compose down && docker start qdrant_server                # 收尾还原
 | Week 7 | 2026-08-31 ~ 09-04 | MCP 全链路（`src/jwipc_dev_mcp_server/` 6 模块 + 双传输客户端 + 冒烟/审查脚本 + 28 条 MCP 测试）；三道安全闸；全量 **350 passed, 1 skipped** | **本次更新**：顶部概述扩至 Week 7；§1 项目内容补 Week 6/Week 7 段落与最终实现；§2 目录结构补 `src/jwipc_dev_mcp_server/`、`data/mcp_sandbox/`、tests/scripts/docs 新文件；§8 补 Week 6/Week 7 两行 |
 | Week 8 | 2026-09-07 ~ 09-11 | LangGraph 状态化工作流（`src/graph/` 6 模块 + 6 业务节点 / 1 澄清节点 + 4 个演示脚本 + 24 条图相关测试）；重试降级、Checkpoint 续跑、人工确认闭环；全量 **374 passed, 1 skipped** | **本次更新**：顶部概述扩至 Week 8；§1 项目内容补 Week 8 段落与最终实现（374 passed）；§2 目录结构补 `src/graph/`、`tests/graph/`；§3 技术栈补 LangGraph；§7 补 Week 8 测试与脚本命令（用例数 374、35 个文件）；§8 补 Week 8 一行 |
 | Week 9 | 2026-09-14 ~ 09-18 | Agent 服务工程化（`src/agent_service/` 15 模块 + 8 个路由/探针 + 5 个脚本 + 88 条服务测试 + Dockerfile/compose + 三份文档）；安全加固（认证 / 限流 / 请求体上限 + 探针豁免）、并发闸门与超时分级错误码、幂等去重、三个探针与进程内指标、容器卷持久化；全量 **462 passed, 1 skipped** | **本次更新**：顶部概述扩至 Week 9；§1 项目内容补 Week 9 段落与最终实现（462 passed）；§7 补 Week 9 测试与脚本命令（本机 + 容器两套流程、用例数 462、36 个文件）+ 8 行服务测试表；§8 补 Week 9 一行 |
+| Week 10 | 2026-09-19 ~ 09-23 | 追踪与评测层（`src/observability/` 双后端 + 三包装器 + HTML 视图、`src/evaluation/` 冻结数据集 + 纯函数指标 + 三组参数对比；追踪 114 + 评测 145 条，全量约 **721 passed, 1 skipped**） | **本次更新**：顶部概述扩至 Week 10；§1 项目内容删除「最终实现」汇总段、把 Week 1–10 全部改写为精简要点、补 Week 9 / Week 10 独立段落；§2 目录结构补 `src/observability/`、`src/evaluation/` 并刷新 tests 计数；§7 测试计数更新为约 721 passed；§8 补 Week 10 一行 |
