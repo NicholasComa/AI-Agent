@@ -196,6 +196,32 @@ uv run python scripts/eval_week10_run.py --tag baseline --judge off
 uv run python scripts/eval_week10_run.py --tag judged --judge on
 ```
 
+参数对比的三组（每组只改一个变量，明细与结论见 `docs/week10_eval_report.md`）：
+
+```bash
+# 基线：不加任何开关，向量检索 + 默认提示词 + 用例自带的 min_score
+uv run python scripts/eval_week10_run.py --tag baseline
+
+# 只换检索策略：向量 + 字符 Bigram BM25 的 RRF 融合
+uv run python scripts/eval_week10_run.py --tag retrieval --strategy hybrid
+
+# 只换生成侧：提示词加严，并把拒答阈值抬到重叠区中部
+uv run python scripts/eval_week10_run.py --tag prompt --prompt grounded --min-score 0.7
+```
+
+```bash
+# 把三组并排成对比表，并逐条列出变差用例（只刷新文档里的生成块）
+uv run python scripts/eval_week10_compare.py --baseline logs/eval/week10_eval_baseline.json --variant logs/eval/week10_eval_retrieval.json logs/eval/week10_eval_prompt.json --out docs/week10_eval_report.md
+```
+
+`--strategy` 写进 `QDRANT_RETRIEVAL_STRATEGY`，取值与 `src/rag` 的
+`RETRIEVAL_STRATEGIES` 一致（`vector` / `hybrid` / `rerank` / `hybrid+rerank`），必须在
+建立依赖之前生效——检索器只在装配那一次构造。三组各自的参数会记进报告 JSON 的 `config`
+字段，对比脚本据此给各列贴标签。
+
+不同策略返回的 `score` 不是同一个量：`vector` 是余弦相似度，`hybrid` 是 RRF 融合分。
+因此**阈值只在同一策略内可比**，不要把一个策略上调好的 `min_score` 直接搬到另一个策略上。
+
 `--limit` 是**每个场景**的条数上限，不是总数上限：否则报告里只会剩下排在最前的那个
 场景，"按场景统计"也就无从谈起。
 
@@ -363,6 +389,8 @@ uv run python scripts/trace_week10_view.py --trace-id 364525400d1c482093907137d3
 | 文档 | 面向 | 内容 |
 | --- | --- | --- |
 | 本文件 | 执行与复核 | 数据集构成、指标口径、跑评测的命令、报告读法、实跑结果 |
+| `docs/week10_eval_report.md` | 结论 | 三组参数对比的数字、变差用例清单、Rubric 一致率与局限声明、成本口径 |
+| `docs/week10_summary.md` | 周总结 | 目标、结构、模块、提交、测试、失败案例、未解决项、下周计划 |
 | `docs/week10_test_commands.md` | 执行 | 观测层的命令与预期输出、界面与记录名对照 |
-| `docs/week10_observability.md` | 工程 | 追踪层的后端切换、span 字段口径、配置键全表 |
+| `docs/week10_observability.md` | 工程 | 追踪层的后端切换、span 字段口径、配置键全表、埋点落点表 |
 | 桌面 `12week/week10_observability_concepts.md` | 学习 | 术语与项目落点、哪些指标能用规则算的判断表 |
