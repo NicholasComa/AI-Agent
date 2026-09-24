@@ -375,14 +375,14 @@ JSONL 上都能用，包括 Langfuse 导出或自己手写的记录。
 | `poho/week10/d48_trace_rag.png` | 知识问答 | 模型名 `qwen3`、`top1_score` / `hit_count` / `source_count`（检索来源的规模）、每条 span 的耗时 |
 | `poho/week10/d48_trace_workflow.png` | 需求分析（走完六个节点） | 12 个 span 的父子链与节点名（`classify` / `functional_points` / `rag_retrieve` / `risk` / `test_points` / `report`）、`chain rag_retrieve` 下挂着 `retriever` |
 | `poho/week10/d48_trace_tool_denied.png` | 工具调用（被拒的一条） | `group=denied`、`denied=true` 与 `is_error=false` 分开记录、入参只有 `path` |
+| `poho/week10/d50_observability_somke.png` | 观测后端冒烟 | Langfuse UI 中 smoke 请求的 trace 列表，覆盖 error / unfinished / request / tool / generation / retrieve 六类 span |
 
 需求分析那一组的节点跑的是确定性替身，所以它的 `generation` span 上模型名写作 `fake`，
 这是设计如此（见评测报告的已知问题第 3 条），不是采集缺失。
 
-三条都取自**本地 JSONL 路径**：评测脚本会把后端强制固定为 `local`，因此这批请求不在
-Langfuse 里。Langfuse 路径的 trace 视图与 Session 视图截图本轮**未产出**，原因是 UI 需要
-交互式登录会话，而本机安全策略不允许安装浏览器自动化工具，`--headless` 无法完成带会话的
-截图。路径本身是通的，可用下面的命令证明库里确实有数据：
+前三条都取自**本地 JSONL 路径**：评测脚本会把后端强制固定为 `local`，因此这批请求不在
+Langfuse 里。Langfuse 路径的 trace 视图本轮**已产出**（见 `poho/week10/d50_observability_somke.png`），
+证明 UI 登录会话与数据展示均正常；下面的命令仍可用来快速验证库里是否有数据：
 
 ```bash
 # Git Bash，项目根；v4 部署改用 v2 观测端点，旧的 /api/public/traces 已 404
